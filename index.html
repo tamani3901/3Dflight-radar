@@ -1,0 +1,3633 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>3D Flight Radar</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<style>
+  :root {
+    --bg-dark: #0f172a;
+    --panel-bg: rgba(15, 23, 42, 0.95);
+    --panel-border: rgba(56, 189, 248, 0.35);
+    --accent: #f59e0b;
+    --accent-blue: #38bdf8;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --danger: #ef4444;
+  }
+  * {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+  body, html {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+
+  button {
+    background: #1e293b;
+    color: var(--text-main);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  button:active { transform: scale(0.96); }
+  button.primary {
+    background: var(--accent);
+    color: #0f172a;
+    border-color: var(--accent);
+  }
+  button.blue {
+    background: var(--accent-blue);
+    color: #0f172a;
+    border-color: var(--accent-blue);
+  }
+  button:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  input[type="text"], select {
+    background: #0f172a;
+    color: #fff;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 14px;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    z-index: 10;
+  }
+  .screen.active { display: flex; }
+
+  /* 1. ファイル読み込み画面 */
+  #import-screen {
+    background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+    overflow-y: auto;
+  }
+  .import-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 24px;
+    width: 100%;
+    max-width: 500px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+    text-align: center;
+  }
+  .import-card h1 {
+    margin: 0 0 8px 0;
+    font-size: 22px;
+    color: var(--accent);
+  }
+  .import-card p {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0 0 16px 0;
+    line-height: 1.5;
+  }
+  .file-btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .file-status-box {
+    background: rgba(0,0,0,0.35);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 13px;
+    text-align: left;
+    margin-bottom: 16px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .file-status-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .file-status-row:last-child { margin-bottom: 0; }
+  .badge {
+    background: #334155;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    color: var(--accent-blue);
+  }
+
+  /* 読込機体確認モーダル */
+  #aircraft-inspector-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.88);
+    backdrop-filter: blur(6px);
+    z-index: 200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  #aircraft-inspector-modal.active { display: flex; }
+  .inspector-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    width: 100%;
+    max-width: 560px;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.75);
+  }
+  .inspector-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .inspector-body {
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ac-list-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .ac-list-item {
+    background: rgba(30, 41, 59, 0.75);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    text-align: left;
+  }
+  .ac-list-item:hover, .ac-list-item.active {
+    border-color: var(--accent);
+    background: rgba(245, 158, 11, 0.14);
+  }
+  .info-detail-box {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 13px;
+  }
+  .info-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px 12px;
+    margin-top: 10px;
+  }
+  .info-kv {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding-bottom: 4px;
+  }
+  .info-k { font-size: 11px; color: var(--text-muted); }
+  .info-v { font-weight: 700; font-family: monospace; color: var(--text-main); }
+
+  /* 2. フライトレーダー画面 (2D) */
+  #radar-screen {
+    z-index: 20;
+    overflow: hidden;
+  }
+  #map {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #0b1324;
+    z-index: 1;
+  }
+  .top-bar {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    z-index: 500;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    flex-wrap: wrap;
+  }
+  .top-bar > * { pointer-events: auto; }
+  .top-right-btns { display: flex; gap: 6px; }
+  .status-pill {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(8px);
+    padding: 8px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .dot-live {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 8px #22c55e;
+  }
+
+  /* タイムラインコントロール */
+  .timeline-bar {
+    position: absolute;
+    bottom: 16px;
+    left: 12px;
+    right: 12px;
+    z-index: 500;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(10px);
+    border-radius: 14px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    transition: bottom 0.25s ease;
+  }
+  .timeline-bar.shifted { bottom: 205px; }
+  .timeline-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .time-display {
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--accent-blue);
+    font-weight: bold;
+  }
+  .speed-btns { display: flex; gap: 4px; }
+  .speed-btns button {
+    padding: 4px 8px;
+    font-size: 11px;
+    border-radius: 6px;
+  }
+  .speed-btns button.active {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
+
+  /* 3Dモデル対応機の飛行時間バー */
+  .timeline-track-wrap {
+    position: relative;
+    width: 100%;
+    padding: 4px 0;
+  }
+  .timeline-legend {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .legend-swatch {
+    width: 10px;
+    height: 6px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .legend-swatch.sel {
+    background: var(--accent-blue);
+  }
+  #model-flight-canvas {
+    display: block;
+    width: 100%;
+    height: 14px;
+    border-radius: 6px;
+    background: rgba(2, 6, 23, 0.85);
+    border: 1px solid rgba(255,255,255,0.12);
+    cursor: pointer;
+    margin-bottom: 4px;
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    height: 6px;
+    background: #334155;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0;
+  }
+
+  /* 飛行機選択時カード */
+  #aircraft-card {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    z-index: 510;
+    background: var(--panel-bg);
+    border: 1px solid var(--accent);
+    backdrop-filter: blur(12px);
+    border-radius: 16px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+    transform: translateY(120%);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 0.25s;
+  }
+  #aircraft-card.visible {
+    transform: translateY(0);
+    visibility: visible;
+    pointer-events: auto;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s;
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .card-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    background: rgba(0,0,0,0.3);
+    padding: 8px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+  }
+  .stat-item { display: flex; flex-direction: column; }
+  .stat-label { font-size: 10px; color: var(--text-muted); }
+  .stat-val { font-size: 13px; font-weight: 700; font-family: monospace; }
+  .card-actions { display: flex; gap: 10px; }
+  .card-actions button { flex: 1; }
+
+  .plane-marker-wrap {
+    position: relative;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .plane-svg {
+    width: 24px;
+    height: 24px;
+    fill: var(--accent);
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.8));
+    transition: fill 0.15s;
+  }
+  .plane-marker-wrap.selected .plane-svg {
+    fill: #ef4444;
+    transform: scale(1.25);
+  }
+  .plane-label {
+    position: absolute;
+    top: 26px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    color: #fff;
+    font-size: 10px;
+    font-family: monospace;
+    padding: 1px 5px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* 3. 3D表示画面 */
+  #view3d-screen {
+    z-index: 40;
+    background: #020617;
+  }
+  #canvas3d-container {
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+  }
+  .hud-top {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 50;
+    pointer-events: none;
+  }
+  .hud-top > * { pointer-events: auto; }
+  .hud-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  #hud-info-panel {
+    position: absolute;
+    top: 108px;
+    left: 12px;
+    width: 260px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(10px);
+    border-radius: 12px;
+    padding: 12px;
+    z-index: 50;
+    font-size: 12px;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  #hud-info-panel.collapsed {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-10px);
+  }
+  .hud-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .hud-row:last-child { border-bottom: none; }
+
+  #nearby-labels {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 48;
+  }
+  .near-label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    will-change: transform;
+    background: rgba(15, 23, 42, 0.82);
+    border: 1px solid rgba(56, 189, 248, 0.6);
+    color: #fff;
+    font: 8.25px/1.25 monospace;
+    padding: 1.5px 4.5px;
+    border-radius: 5px;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .near-label .nl-sub {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    color: #7dd3fc;
+    font-size: 7.5px;
+  }
+  .near-arrow {
+    display: inline-block;
+    color: #38bdf8;
+    font-size: 10px;
+    line-height: 1;
+  }
+  #no-model-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.88);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 45;
+    text-align: center;
+    padding: 24px;
+  }
+  #no-model-overlay.visible { display: flex; }
+  .warning-box {
+    background: #1e293b;
+    border: 2px solid var(--danger);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 360px;
+  }
+
+  /* 4. 設定画面 */
+  #settings-screen {
+    z-index: 80;
+    background: var(--bg-dark);
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .settings-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .settings-section {
+    background: #1e293b;
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .settings-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 15px;
+    color: var(--accent-blue);
+  }
+  .setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 12px;
+  }
+  .setting-row:last-child { margin-bottom: 0; }
+  #preview3d-box {
+    width: 100%;
+    height: 220px;
+    background: #020617;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.15);
+    margin: 12px 0;
+    position: relative;
+    overflow: hidden;
+    touch-action: none;
+  }
+  .preview-hint {
+    position: absolute;
+    bottom: 6px;
+    right: 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+  .rot-btn-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .rot-btn-group button { padding: 6px 10px; font-size: 12px; }
+
+  #loader-toast {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: #000;
+    font-weight: bold;
+    font-size: 13px;
+    padding: 8px 16px;
+    border-radius: 20px;
+    z-index: 999;
+    display: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+</style>
+</head>
+<body>
+
+<div id="loader-toast">読み込み中...</div>
+
+<!-- 1. データ読み込み画面 -->
+<div id="import-screen" class="screen active">
+  <div class="import-card">
+    <h1>3D FLIGHT RADAR</h1>
+    <p>5秒ごとの全世界フライトデータ（.gz / .json）や trace_full_*.json と、3D機体モデル（{ICAO機種コード}.glb）を読み込めます。</p>
+
+    <div class="setting-row" style="margin-bottom:12px;">
+      <span style="font-size:12px; text-align:left;">データ間引き（軽量化）<br><span style="font-size:10px; color:var(--text-muted);">読み込み前に選択。大きいデータほど間隔を広げるとメモリを節約できます</span></span>
+      <select id="thin-select-import" onchange="onThinChange(this.value)">
+        <option value="5" selected>5秒間隔（推奨）</option>
+        <option value="10">10秒間隔（軽い）</option>
+        <option value="30">30秒間隔（最軽量）</option>
+        <option value="0">間引きなし（全点）</option>
+      </select>
+    </div>
+
+    <div class="file-btn-group">
+      <button class="blue" onclick="document.getElementById('file-input-multi').click()">
+        📄 ファイルを選ぶ（.gz / .json / .glb 複数選択可）
+      </button>
+      <button onclick="document.getElementById('file-input-dir').click()">
+        📁 フォルダごと選ぶ
+      </button>
+      <input type="file" id="file-input-multi" multiple accept=".json,.gz,.glb" style="display:none">
+      <input type="file" id="file-input-dir" webkitdirectory directory multiple style="display:none">
+    </div>
+
+    <div class="file-status-box">
+      <div class="file-status-row">
+        <span>読み込んだファイル数:</span>
+        <span id="stat-files" class="badge">0 件</span>
+      </div>
+      <div class="file-status-row">
+        <span>含まれる機体数:</span>
+        <span id="stat-flights" class="badge">0 機</span>
+      </div>
+      <div class="file-status-row">
+        <span>記録ポイント総数:</span>
+        <span id="stat-points" class="badge">0 点</span>
+      </div>
+      <div class="file-status-row">
+        <span>データの時間範囲:</span>
+        <span id="stat-time-range" class="badge">---</span>
+      </div>
+      <div class="file-status-row">
+        <span>読み込んだ3Dモデル (.glb):</span>
+        <span id="stat-models" class="badge">0 種類</span>
+      </div>
+      <div id="loaded-model-list" style="font-size:11px; color:var(--text-muted); margin-top:6px; word-break:break-all;"></div>
+    </div>
+
+    <div style="display:flex; gap:10px; margin-bottom:10px;">
+      <button id="btn-inspect-import" style="flex:1;" disabled onclick="openAircraftInspector()">
+        🔍 含まれる機体を確認
+      </button>
+      <button id="btn-start-radar" class="primary" style="flex:1;" disabled onclick="enterRadarScreen()">
+        完了（レーダーへ）
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 読込ファイル内の機体確認モーダル -->
+<div id="aircraft-inspector-modal">
+  <div class="inspector-card">
+    <div class="inspector-header">
+      <strong style="font-size:15px;">✈️ 読込データ内の機体確認</strong>
+      <button style="padding:4px 10px; font-size:12px;" onclick="closeAircraftInspector()">✕ 閉じる</button>
+    </div>
+    <div class="inspector-body">
+      <div id="inspector-mode-banner" class="badge" style="align-self:flex-start; padding:4px 10px;"></div>
+
+      <div id="inspector-search-area" style="display:none; flex-direction:column; gap:8px;">
+        <input type="text" id="inspector-search-input" placeholder="機種・機体番号・ICAOで検索（例: 767, B763, JA）" oninput="renderInspectorSelection()">
+        <select id="inspector-select" onchange="onInspectorSelectChange()">
+          <option value="">-- 機体を選択してください --</option>
+        </select>
+      </div>
+
+      <div id="inspector-list-area" class="ac-list-box" style="display:none;"></div>
+
+      <div id="inspector-detail-area" class="info-detail-box" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span id="insp-title" style="font-size:16px; font-weight:800; color:var(--accent);">---</span>
+          <span id="insp-type-badge" class="badge">---</span>
+        </div>
+        <div id="insp-desc" style="font-size:12px; color:var(--text-muted); margin-top:2px;">---</div>
+
+        <div class="info-detail-grid">
+          <div class="info-kv"><span class="info-k">ICAO (24bit)</span><span id="insp-icao" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">機体番号 (Reg)</span><span id="insp-reg" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">ICAO機種コード</span><span id="insp-type" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">最新コールサイン</span><span id="insp-callsign" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">記録ポイント数</span><span id="insp-count" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">最新高度 / 速度</span><span id="insp-alt-spd" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">最新緯度・経度</span><span id="insp-pos" class="info-v">-</span></div>
+          <div class="info-kv"><span class="info-k">3Dモデル有無</span><span id="insp-model" class="info-v">-</span></div>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="blue" style="flex:1;" onclick="jumpToRadarWithSelected()">🗺️ レーダーで表示</button>
+          <button class="primary" style="flex:1;" onclick="jumpTo3DWithSelected()">✈️ 3D表示</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 2. フライトレーダー画面 -->
+<div id="radar-screen" class="screen">
+  <div id="map"></div>
+
+  <div class="top-bar">
+    <div class="status-pill">
+      <span class="dot-live"></span>
+      <span id="active-count-label">表示中: 0 機</span>
+    </div>
+    <div class="top-right-btns">
+      <button onclick="openAircraftInspector()">🔍 含まれる機体</button>
+      <button onclick="openSettingsScreen()">⚙️ 設定</button>
+    </div>
+  </div>
+
+  <!-- タイムラインコントロール -->
+  <div id="timeline-bar" class="timeline-bar">
+    <div class="timeline-top">
+      <button id="btn-play-pause" class="primary" style="padding:6px 12px; font-size:12px;" onclick="togglePlay()">⏸ 一時停止</button>
+      <div id="time-display" class="time-display">--:--:-- JST</div>
+      <div class="speed-btns">
+        <button data-speed="1" class="active" onclick="setSpeed(1)">1x</button>
+        <button data-speed="5" onclick="setSpeed(5)">5x</button>
+        <button data-speed="20" onclick="setSpeed(20)">20x</button>
+        <button data-speed="60" onclick="setSpeed(60)">60x</button>
+      </div>
+    </div>
+
+    <div class="timeline-track-wrap">
+      <div class="timeline-legend">
+        <span class="legend-item"><span class="legend-swatch"></span>3Dデータ対応機の飛行時間</span>
+        <span class="legend-item"><span class="legend-swatch sel"></span>選択中機体</span>
+        <span id="model-flight-summary">3D対応飛行帯: なし</span>
+      </div>
+      <canvas id="model-flight-canvas" height="14"></canvas>
+      <input type="range" id="time-slider" min="0" max="1000" value="0">
+    </div>
+  </div>
+
+  <!-- 飛行機選択時カード -->
+  <div id="aircraft-card">
+    <div class="card-header">
+      <div>
+        <div class="card-title">
+          <span id="card-reg">---</span>
+          <span id="card-type" class="badge">---</span>
+        </div>
+        <div id="card-desc" class="card-sub">---</div>
+      </div>
+      <button style="padding:4px 10px; font-size:12px;" onclick="deselectAircraft()">✕</button>
+    </div>
+    <div class="card-grid">
+      <div class="stat-item">
+        <span class="stat-label">高度</span>
+        <span id="card-alt" class="stat-val">---</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">対地速度</span>
+        <span id="card-spd" class="stat-val">---</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">昇降率</span>
+        <span id="card-vrate" class="stat-val">---</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">便名/方位</span>
+        <span id="card-hdg" class="stat-val">---</span>
+      </div>
+    </div>
+    <div class="card-actions">
+      <button class="primary" onclick="enter3DView()">✈️ 3D表示</button>
+    </div>
+  </div>
+</div>
+
+<!-- 3. 3D表示画面 -->
+<div id="view3d-screen" class="screen">
+  <div class="hud-top">
+    <div class="hud-controls">
+      <button onclick="toggleHudInfo()">📋 飛行情報</button>
+      <button id="btn-sound-toggle" onclick="toggleEngineSound()">🔇 音: OFF</button>
+      <button id="btn-near-label" onclick="toggleNearLabels()">🏷 周辺ラベル: ON</button>
+      <button onclick="rotateAllModels(180)">🔄 モデル向き反転</button>
+    </div>
+    <button class="primary" onclick="exit3DView()">終了</button>
+  </div>
+
+  <div id="hud-info-panel">
+    <div class="hud-row"><span>機体番号:</span><strong id="hud-reg">-</strong></div>
+    <div class="hud-row"><span>ICAO機種:</span><strong id="hud-type">-</strong></div>
+    <div class="hud-row"><span>機種名:</span><strong id="hud-desc" style="text-align:right; max-width:150px;">-</strong></div>
+    <div class="hud-row"><span>高度:</span><strong id="hud-alt">-</strong></div>
+    <div class="hud-row"><span>速度:</span><strong id="hud-spd">-</strong></div>
+    <div class="hud-row"><span>昇降率:</span><strong id="hud-vs">-</strong></div>
+    <div class="hud-row"><span>方位:</span><strong id="hud-hdg">-</strong></div>
+    <div class="hud-row"><span>周辺3D機体:</span><strong id="hud-nearby">0 機</strong></div>
+  </div>
+
+  <div id="no-model-overlay">
+    <div class="warning-box">
+      <h2 style="color:var(--danger); margin:0 0 10px 0;">3D表示できません</h2>
+      <p id="no-model-msg" style="font-size:13px; color:var(--text-muted); margin:0 0 18px 0;">
+        この機体の3Dモデルデータが見つかりません。
+      </p>
+      <button class="primary" style="width:100%;" onclick="exit3DView()">レーダー画面に戻る</button>
+    </div>
+  </div>
+
+  <div id="nearby-labels"></div>
+  <div id="canvas3d-container"></div>
+</div>
+
+<!-- 4. 設定画面 -->
+<div id="settings-screen" class="screen">
+  <div class="settings-header">
+    <h2 style="margin:0; font-size:18px;">⚙️ 設定</h2>
+    <button class="primary" onclick="closeSettingsScreen()">閉じる</button>
+  </div>
+
+  <div class="settings-section">
+    <h3>読込データ確認</h3>
+    <div class="setting-row">
+      <span>含まれる機体を確認・検索</span>
+      <button onclick="openAircraftInspector()">🔍 含まれる機体を確認</button>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>ラベル表示設定</h3>
+    <div class="setting-row">
+      <span>地図上のラベル表示</span>
+      <input type="checkbox" id="set-label-show" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="updateLabelSettings()">
+    </div>
+    <div class="setting-row">
+      <span>ラベルの種類</span>
+      <select id="set-label-type" onchange="updateLabelSettings()">
+        <option value="both">機体番号 + 機種コード (JA123A / B789)</option>
+        <option value="reg">機体番号のみ (JA123A)</option>
+        <option value="type">ICAO機種コードのみ (B789)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>3D表示・サウンド</h3>
+    <div class="setting-row">
+      <span>周辺機のラベル<br><span style="font-size:10px; color:var(--text-muted);">周りの機体の上に、見ている機体の方向を矢印で表示</span></span>
+      <input type="checkbox" id="set-near-labels" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="setNearLabels(this.checked)">
+    </div>
+    <div class="setting-row">
+      <span>モデルのポリゴン数（端末に合わせて選択）<br><span style="font-size:10px; color:var(--text-muted);">多すぎるモデルは自動で削減し、遠くの機体ほど簡略モデルで表示します。変更するとモデルを再構築します（「無効」は削減・遠距離簡略化なし。ただし極端に重いモデルのみ安全のため削減）</span></span>
+      <select id="set-quality" onchange="onQualityChange(this.value)">
+        <option value="ultralow">超軽量</option>
+        <option value="low">軽量</option>
+        <option value="standard">標準</option>
+        <option value="high">高</option>
+        <option value="max">最高</option>
+        <option value="off">無効</option>
+      </select>
+    </div>
+    <div class="setting-row" style="flex-direction:column; align-items:stretch;">
+      <div style="display:flex; justify-content:space-between; font-size:13px;">
+        <span>エンジン音の音量（3D表示のHUDで 音:ON）</span>
+        <span id="set-volume-val" style="color:var(--accent); font-weight:bold;">60%</span>
+      </div>
+      <input type="range" id="set-volume" min="0" max="100" step="5" value="60" oninput="onVolumeChange(this.value)">
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>地図表示</h3>
+    <div class="setting-row">
+      <span>レーダー地図</span>
+      <select id="set-basemap" onchange="changeBaseMap()">
+        <option value="dark">ダーク（Esri）</option>
+        <option value="street">標準（Esri）</option>
+        <option value="sat">衛星写真（Esri）</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <span>3D表示の地面（次回の3D表示から反映）</span>
+      <select id="set-groundmap" onchange="changeGroundMap()">
+        <option value="street">標準地図（Esri）</option>
+        <option value="sat">衛星写真（Esri）</option>
+      </select>
+    </div>
+    <p style="font-size:10px; color:var(--text-muted); margin:8px 0 0 0;">地図: Esri, HERE, Garmin, © OpenStreetMap contributors</p>
+  </div>
+
+  <div class="settings-section">
+    <h3>追加のファイル読み込み</h3>
+    <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
+      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json、3Dモデル（.glb）を追加でインポートできます。
+    </p>
+    <div class="setting-row">
+      <span style="font-size:12px;">データ間引き（これから読む分に適用）</span>
+      <select id="thin-select-settings" onchange="onThinChange(this.value)">
+        <option value="5" selected>5秒間隔（推奨）</option>
+        <option value="10">10秒間隔（軽い）</option>
+        <option value="30">30秒間隔（最軽量）</option>
+        <option value="0">間引きなし（全点）</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <button class="blue" style="flex:1;" onclick="document.getElementById('file-input-multi').click()">
+        ＋ ファイルを追加インポート
+      </button>
+    </div>
+  </div>
+
+  <div class="settings-section">
+    <h3>3Dモデルの向き・サイズ調整</h3>
+    <div class="setting-row">
+      <span>全モデル一括の向き補正<br><span style="font-size:10px; color:var(--text-muted);">現在: <b id="set-yaw-val" style="color:var(--accent);">0°</b>　機首が黄色矢印と逆なら180°反転</span></span>
+      <div class="rot-btn-group">
+        <button onclick="rotateAllModels(180)">180°反転</button>
+        <button onclick="rotateAllModels(90)">+90°</button>
+        <button onclick="resetAllModelYaw()">戻す</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <span>調整する3Dモデル:</span>
+      <select id="set-model-select" onchange="selectPreviewModel()">
+        <option value="">モデル未読み込み</option>
+      </select>
+    </div>
+
+    <div id="preview3d-box">
+      <div class="preview-hint">黄色矢印＝進行方向（前） / 指で回転可能</div>
+    </div>
+
+    <div class="setting-row">
+      <span>向き回転 (90度刻み):</span>
+      <div class="rot-btn-group">
+        <button onclick="rotatePreviewModel('x', 90)">X +90°</button>
+        <button onclick="rotatePreviewModel('y', 90)">Y +90°</button>
+        <button onclick="rotatePreviewModel('z', 90)">Z +90°</button>
+        <button onclick="resetPreviewTransform()">リセット</button>
+      </div>
+    </div>
+
+    <div class="setting-row" style="flex-direction:column; align-items:stretch;">
+      <div style="display:flex; justify-content:space-between; font-size:13px;">
+        <span>スケール倍率:</span>
+        <span id="set-scale-val" style="color:var(--accent); font-weight:bold;">1.0x</span>
+      </div>
+      <input type="range" id="set-model-scale" min="0.1" max="5.0" step="0.1" value="1.0" oninput="scalePreviewModel(this.value)">
+    </div>
+  </div>
+</div>
+
+<script>
+const state = {
+  importedFileCount: 0,
+  snapshotSeqCounter: 0,
+  flights: new Map(),
+  models: new Map(),
+  globalMinTime: Infinity,
+  globalMaxTime: -Infinity,
+  currentTime: 0,
+  isPlaying: true,
+  playbackSpeed: 1,
+  lastFrameTime: performance.now(),
+  selectedIcao: null,
+  inspectedIcao: null,
+  labelShow: true,
+  labelType: 'both',
+  is3DMode: false,
+  soundEnabled: false,
+  sceneReady: false,
+  entering3D: false,
+  thinSec: 5,
+  baseMap: 'dark',
+  groundMap: 'street',
+  modelYaw: 0,        // 全3Dモデル一括の向き補正（度）
+  nearLabels: true,   // 3D表示の周辺機ラベル
+  volume: 0.6,
+  quality: 'standard',
+  frameDt: 0.016
+};
+
+let map = null;
+let sliderDragging = false;
+let selectedTrajectory = null;
+const gltfLoader = new THREE.GLTFLoader();
+
+const BASEMAPS = {
+  dark: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    labels: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+    maxNativeZoom: 16
+  },
+  street: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    labels: null,
+    maxNativeZoom: 19
+  },
+  sat: {
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    labels: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    maxNativeZoom: 19
+  }
+};
+const GROUND_URLS = {
+  street: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`,
+  sat: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
+};
+const MAX_LOADED_MODELS = 6;     // 同時にメモリへ展開しておく3Dモデル数の上限
+const MODEL_TEXTURE_MAX = 1024;  // 3Dモデルのテクスチャ最大解像度(px)
+// ポリゴン数プリセット: cap = 1機種あたりの最大三角形数（近距離/選択機）。lod = 遠距離で簡略モデルに切り替えるか
+const QUALITY_PRESETS = {
+  ultralow: { cap: 6000,   lod: true },
+  low:      { cap: 15000,  lod: true },
+  standard: { cap: 40000,  lod: true },
+  high:     { cap: 100000, lod: true },
+  max:      { cap: 250000, lod: true },
+  off:      { cap: 600000, lod: false }   // 無効: 削減しない（動作に影響する極端なモデルのみ安全のため削減）
+};
+const LOD_RATIOS = [0.3, 0.1];       // 遠距離用の簡略モデルの三角形数（近距離用に対する比率）
+const LOD_DIST_K = [30, 120];        // 機体サイズの何倍離れたら切り替えるか
+const LOD_MIN_TRIS = 1500;           // これ以下の軽いモデルは簡略化しない
+const DEFAULT_MODEL_SIZE_M = 35; // 実寸データが無い機種の仮の大きさ(m)
+// 機種コード → 実寸の最大寸法(m) = max(全長, 翼幅/ローター径)。3Dシーンは 1単位=1m なので、地図と同じ縮尺で表示される
+const REAL_SIZE_M = {
+  A318:34.1, A319:35.8, A320:37.6, A321:44.5, A19N:35.8, A20N:37.6, A21N:44.5,
+  A306:54.1, A310:46.7, A332:60.3, A333:63.7, A338:64.0, A339:64.0, A342:60.3, A343:63.7, A345:67.9, A346:75.4,
+  A359:66.8, A35K:73.8, A388:79.8, A124:73.3, A3ST:56.2, A400:45.1, BCS1:35.1, BCS3:38.7,
+  B712:37.8, B731:28.6, B732:30.5, B733:33.4, B734:36.4, B735:31.0, B736:34.3, B737:34.3, B738:39.5, B739:42.1,
+  B37M:35.9, B38M:39.5, B39M:42.2, B3XM:43.8, B701:46.6, B703:46.6,
+  B741:70.7, B742:70.7, B743:70.7, B744:70.7, B748:76.3, B752:47.3, B753:54.4,
+  B762:48.5, B763:54.9, B764:61.4, B772:63.7, B77L:64.8, B773:73.9, B77W:73.9, B788:60.1, B789:62.8, B78X:68.3,
+  MD11:61.2, DC10:55.5, MD80:45.1, MD81:45.1, MD82:45.1, MD83:45.1, MD87:39.8, MD88:45.1, MD90:46.5, B462:28.6, B463:31.0,
+  E170:29.9, E75L:31.7, E75S:31.7, E190:36.2, E195:38.7, E290:33.7, E295:41.5, E135:26.3, E145:29.9, E35L:26.3,
+  CRJ1:26.8, CRJ2:26.8, CRJ7:32.5, CRJ9:36.2, CRJX:39.1,
+  DH8A:25.9, DH8B:25.9, DH8C:27.4, DH8D:32.8, AT42:24.6, AT43:22.7, AT45:24.6, AT72:27.2, AT75:27.2, AT76:27.2,
+  SF34:21.4, B190:17.7, JS41:19.3, SU95:29.9, C919:38.9, YS11:32.0, BN2P:14.0, SW4:18.1,
+  GLF4:26.9, GLF5:29.4, GLF6:30.4, GL5T:29.5, GL7T:33.8, GLEX:30.3, CL60:20.9, CL30:20.9, CL35:21.0,
+  C25A:15.7, C25B:15.9, C25C:16.3, C56X:19.4, C680:19.4, C550:15.8, C750:22.0, FA7X:26.2, FA50:18.9, F900:20.2, F2TH:20.2,
+  LJ45:17.7, LJ60:19.7, H25B:15.7, E55P:16.2, E50P:15.6, PC12:16.3, PC24:17.3, C172:11.0, C182:11.0, C208:15.9, P28A:10.7,
+  SR20:11.7, SR22:11.7, BE20:16.6, BE9L:15.3, BE58:11.5, TBM9:12.2, TBM8:12.2, PA46:13.1, DA40:11.9, DA62:14.6,
+  R22:8.8, R44:11.6, R66:11.6, B06:11.3, B407:12.7, B412:17.1, B429:12.8, AS50:10.7, AS55:12.9, AS65:13.4, EC20:10.7,
+  EC30:10.7, EC35:12.2, EC45:13.0, EC55:12.9, A109:13.0, A119:13.0, A139:16.7, A169:14.6, S76:16.0, S92:20.0, S61:22.0,
+  H60:19.8, H64:17.7, H47:30.1, MI8:25.2, MI26:40.0, KA32:15.9,
+  C130:40.4, C30J:40.4, C17:53.0, C5M:75.5, K35R:41.5, P8:39.5, B52:56.4, E3CF:46.6, E3TF:46.6, V22:25.8, C2:24.6, E2:24.6,
+  F16:15.0, F15:19.4, F18:17.1, F18H:17.1, F18S:18.3, F35:15.7, F22:18.9, T38:14.1, P3:35.6, KC10:55.5, K767:50.5
+};
+function getModelRealSize(typeCode) {
+  const v = REAL_SIZE_M[String(typeCode || '').toUpperCase()];
+  return v ? { size: v, known: true } : { size: DEFAULT_MODEL_SIZE_M, known: false };
+}
+const LABEL_MAX = 250;           // 地図上のラベルを描く機体数の上限（超えると選択機のみ）
+const GAP_SEC = 120; // これ以上データが空いたら別区間として扱う（補間・軌跡・時間バーで共通）
+
+function loadSavedSettings() {
+  try {
+    const b = localStorage.getItem('fr_baseMap');
+    if (b && BASEMAPS[b]) state.baseMap = b;
+    const g = localStorage.getItem('fr_groundMap');
+    if (g && GROUND_URLS[g]) state.groundMap = g;
+    const y = parseInt(localStorage.getItem('fr_modelYaw'), 10);
+    if ([0, 90, 180, 270].includes(y)) state.modelYaw = y;
+    const nl = localStorage.getItem('fr_nearLabels');
+    if (nl !== null) state.nearLabels = nl === '1';
+    const vol = parseFloat(localStorage.getItem('fr_volume'));
+    if (isFinite(vol) && vol >= 0 && vol <= 1) state.volume = vol;
+    if (localStorage.getItem('fr_sound') === '1') state.soundEnabled = true;
+    const q = localStorage.getItem('fr_quality');
+    if (q && QUALITY_PRESETS[q]) state.quality = q;
+  } catch (e) {}
+  document.getElementById('set-basemap').value = state.baseMap;
+  document.getElementById('set-groundmap').value = state.groundMap;
+  updateYawLabel();
+  setNearLabels(state.nearLabels);
+  document.getElementById('set-volume').value = Math.round(state.volume * 100);
+  document.getElementById('set-volume-val').textContent = `${Math.round(state.volume * 100)}%`;
+  updateSoundButton();
+  document.getElementById('set-quality').value = state.quality;
+}
+function saveSetting(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function changeBaseMap() {
+  state.baseMap = document.getElementById('set-basemap').value;
+  saveSetting('fr_baseMap', state.baseMap);
+  applyBaseMap();
+}
+function changeGroundMap() {
+  state.groundMap = document.getElementById('set-groundmap').value;
+  saveSetting('fr_groundMap', state.groundMap);
+}
+function onThinChange(v) {
+  state.thinSec = parseFloat(v) || 0;
+  ['thin-select-import', 'thin-select-settings'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = String(v);
+  });
+}
+
+function escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function showToast(msg, show = true) {
+  const el = document.getElementById('loader-toast');
+  el.textContent = msg;
+  el.style.display = show ? 'block' : 'none';
+}
+
+window.addEventListener('DOMContentLoaded', async () => {
+  loadSavedSettings();
+  initFlightTimelineCanvas();
+  try {
+    const res = await fetch('./manifest.json');
+    if (res.ok) {
+      const fileList = await res.json();
+      if (Array.isArray(fileList) && fileList.length > 0) {
+        showToast('同ディレクトリのデータを自動読み込み中...');
+        for (const path of fileList) {
+          try {
+            const name = path.split('/').pop();
+            if (/\.glb$/i.test(name)) {
+              registerModelSource(name, { url: path }); // 3Dモデルは必要になった時に取得
+              continue;
+            }
+            const fRes = await fetch(path);
+            if (!fRes.ok) continue;
+            const buf = await fRes.arrayBuffer();
+            await processImportedBuffer(name, buf);
+          } catch (e) {}
+        }
+        finalizeImportedData();
+        showToast('', false);
+        if (state.flights.size > 0) enterRadarScreen();
+      }
+    }
+  } catch (e) {}
+});
+
+document.getElementById('file-input-multi').addEventListener('change', handleFileSelect);
+document.getElementById('file-input-dir').addEventListener('change', handleFileSelect);
+
+async function handleFileSelect(e) {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+  showToast(`${files.length} 件のファイルを処理中...`);
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (/\.glb$/i.test(file.name)) {
+      // 3Dモデルは読み込まず、ファイル参照だけ保持（使う時に初めて展開する）
+      registerModelSource(file.name, { file });
+    } else if (/\.(json|gz)$/i.test(file.name)) {
+      let buf = await file.arrayBuffer();
+      await processImportedBuffer(file.name, buf);
+      buf = null;
+      showToast(`処理中... (${i + 1}/${files.length})`);
+      if (file.size > 1048576 || i % 30 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  finalizeImportedData();
+  showToast('', false);
+  e.target.value = '';
+}
+
+async function processImportedBuffer(filename, arrayBuffer) {
+  const lower = filename.toLowerCase();
+  if (!(lower.endsWith('.json') || lower.endsWith('.gz'))) return;
+  try {
+    let text = await decodeJsonOrGzip(arrayBuffer);
+    let data = JSON.parse(text);
+    text = null;
+    let parsedAny = false;
+
+    if (data && data.icao && Array.isArray(data.trace) && data.trace.length > 0) {
+      parseTraceFull(data);
+      parsedAny = true;
+    } else if (data && (Array.isArray(data.aircraft) || Array.isArray(data))) {
+      const list = Array.isArray(data.aircraft) ? data.aircraft : data;
+      let ts = typeof data.now === 'number'
+        ? data.now
+        : (typeof data.timestamp === 'number'
+          ? data.timestamp
+          : extractTimestampFromFilename(filename));
+      if (ts > 1e12) ts /= 1000;  // ミリ秒単位のタイムスタンプを秒に正規化
+      parseSnapshotList(list, ts);
+      parsedAny = true;
+    }
+    data = null;
+
+    if (parsedAny) state.importedFileCount++;
+  } catch (err) {}
+}
+
+function registerModelSource(filename, source) {
+  const typeCode = filename.replace(/\.glb$/i, '').toUpperCase().trim();
+  const prev = state.models.get(typeCode);
+  if (prev) {
+    disposeModelScene(prev);
+    prev.source = source;
+    prev.failed = false;
+  } else {
+    state.models.set(typeCode, {
+      source, scene: null, loading: null, failed: false, lastUsed: 0,
+      rotX: 0, rotY: 0, rotZ: 0, scale: 1.0
+    });
+  }
+}
+
+// ---- ポリゴン削減（頂点クラスタリング方式: 高速で、UVの継ぎ目も崩れにくい） ----
+function geoTriCount(g) {
+  const p = g.attributes.position;
+  if (!p) return 0;
+  return g.index ? Math.floor(g.index.count / 3) : Math.floor(p.count / 3);
+}
+
+function canSimplifyMesh(o) {
+  if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || !o.geometry || !o.geometry.attributes.position) return false;
+  const g = o.geometry;
+  if (g.attributes.skinIndex || g.attributes.skinWeight) return false;
+  if (g.morphAttributes && Object.keys(g.morphAttributes).length) return false;
+  return true;
+}
+
+// 三角形数が targetTris 以下になるよう削減した新しい BufferGeometry を返す（削減不要なら null）
+function simplifyGeometry(geo, targetTris) {
+  const pos = geo.attributes.position;
+  const V = pos.count;
+  const T = geoTriCount(geo);
+  if (T <= targetTris || V < 12) return null;
+
+  const px = new Float32Array(V), py = new Float32Array(V), pz = new Float32Array(V);
+  let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (let i = 0; i < V; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    px[i] = x; py[i] = y; pz[i] = z;
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  const maxD = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
+  const uvA = geo.attributes.uv;
+  let uk = null;
+  if (uvA) {
+    uk = new Uint8Array(V);   // UVを粗く区切ったセル。違うUV島の頂点を同じクラスタにしない
+    for (let i = 0; i < V; i++) uk[i] = ((Math.floor(uvA.getX(i) * 16) & 15) << 4) | (Math.floor(uvA.getY(i) * 16) & 15);
+  }
+  const index = geo.index ? geo.index.array : null;
+  const ids = new Int32Array(V);
+
+  const cluster = (cells) => {
+    const inv = cells / maxD;
+    const map = new Map();
+    let n = 0;
+    for (let i = 0; i < V; i++) {
+      const ix = Math.floor((px[i] - minX) * inv);
+      const iy = Math.floor((py[i] - minY) * inv);
+      const iz = Math.floor((pz[i] - minZ) * inv);
+      const key = (((ix * 1030) + iy) * 1030 + iz) * 256 + (uk ? uk[i] : 0);
+      let id = map.get(key);
+      if (id === undefined) { id = n++; map.set(key, id); }
+      ids[i] = id;
+    }
+    let tris = 0;
+    for (let t = 0; t < T; t++) {
+      const a = ids[index ? index[t * 3] : t * 3];
+      const b = ids[index ? index[t * 3 + 1] : t * 3 + 1];
+      const c = ids[index ? index[t * 3 + 2] : t * 3 + 2];
+      if (a !== b && b !== c && a !== c) tris++;
+    }
+    return { n, tris };
+  };
+
+  // 目標の三角形数に収まる最も細かい格子を二分探索（対数スケール）
+  let lo = 4, hi = 1024, best = 4;
+  for (let it = 0; it < 8 && hi - lo > 1; it++) {
+    const mid = Math.max(lo + 1, Math.min(hi - 1, Math.round(Math.sqrt(lo * hi))));
+    const r = cluster(mid);
+    if (r.tris > targetTris) hi = mid; else { lo = mid; best = mid; }
+  }
+  const fin = cluster(best);
+  if (fin.tris < 4) return null;   // 削りすぎて形が消える場合は諦める
+
+  const n = fin.n;
+  const out = new THREE.BufferGeometry();
+  const cnt = new Uint32Array(n);
+  for (let i = 0; i < V; i++) cnt[ids[i]]++;
+  for (const name in geo.attributes) {
+    const a = geo.attributes[name];
+    const sz = a.itemSize;
+    const sum = new Float32Array(n * sz);
+    for (let i = 0; i < V; i++) {
+      const o = ids[i] * sz;
+      sum[o] += a.getX(i);
+      if (sz > 1) sum[o + 1] += a.getY(i);
+      if (sz > 2) sum[o + 2] += a.getZ(i);
+      if (sz > 3) sum[o + 3] += a.getW(i);
+    }
+    for (let c = 0; c < n; c++) {
+      const inv = 1 / cnt[c];
+      for (let k = 0; k < sz; k++) sum[c * sz + k] *= inv;
+      if (name === 'normal' && sz === 3) {
+        const l = Math.hypot(sum[c * 3], sum[c * 3 + 1], sum[c * 3 + 2]) || 1;
+        sum[c * 3] /= l; sum[c * 3 + 1] /= l; sum[c * 3 + 2] /= l;
+      }
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(sum, sz));
+  }
+  const idxArr = n > 65535 ? new Uint32Array(fin.tris * 3) : new Uint16Array(fin.tris * 3);
+  let w = 0;
+  for (let t = 0; t < T; t++) {
+    const a = ids[index ? index[t * 3] : t * 3];
+    const b = ids[index ? index[t * 3 + 1] : t * 3 + 1];
+    const c = ids[index ? index[t * 3 + 2] : t * 3 + 2];
+    if (a !== b && b !== c && a !== c) { idxArr[w++] = a; idxArr[w++] = b; idxArr[w++] = c; }
+  }
+  out.setIndex(new THREE.BufferAttribute(idxArr, 1));
+  out.computeBoundingBox();
+  out.computeBoundingSphere();
+  return out;
+}
+
+function collectMeshes(root) {
+  const list = [];
+  root.traverse((o) => { if (o.isMesh) list.push(o); });
+  return list;
+}
+
+const yieldToUI = () => new Promise((r) => setTimeout(r, 0));
+
+// meshes の各ジオメトリを、全体で ratio 倍の三角形数になるよう削減して返す（meshesと同じ順序の配列）
+async function buildReducedGeometries(srcGeos, canSimp, ratio) {
+  const out = [];
+  let last = performance.now();
+  for (let i = 0; i < srcGeos.length; i++) {
+    const g = srcGeos[i];
+    let ng = g;
+    if (canSimp[i]) {
+      const t = geoTriCount(g);
+      if (t > 150) {
+        const r = simplifyGeometry(g, Math.max(150, Math.round(t * ratio)));
+        if (r) ng = r;
+      }
+    }
+    out.push(ng);
+    if (performance.now() - last > 12) { await yieldToUI(); last = performance.now(); }
+  }
+  return out;
+}
+
+function downscaleModelTextures(root, maxSize) {
+  // 同じ画像を複数のテクスチャが共有している場合があるので、「画像 → 縮小後canvas」で管理する。
+  // （以前はテクスチャ単位で処理して元画像を close していたため、共有していた別テクスチャが
+  //   閉じた画像を参照し続け、再描画のたびに真っ黒/真っ白になっていた）
+  const doneTex = new Set();
+  const imgMap = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      for (const key in mat) {
+        const tex = mat[key];
+        if (!tex || !tex.isTexture || doneTex.has(tex)) continue;
+        doneTex.add(tex);
+        const img = tex.image;
+        if (!img) continue;
+        let out = imgMap.get(img);
+        if (out === undefined) {
+          out = img;
+          const w = img.width || img.naturalWidth;
+          const h = img.height || img.naturalHeight;
+          if (w && h && Math.max(w, h) > maxSize) {
+            try {
+              const k = maxSize / Math.max(w, h);
+              const c = document.createElement('canvas');
+              c.width = Math.max(1, Math.round(w * k));
+              c.height = Math.max(1, Math.round(h * k));
+              c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+              out = c;
+            } catch (e) { out = img; }
+          }
+          imgMap.set(img, out);
+        }
+        if (out !== img) {
+          tex.image = out;
+          tex.needsUpdate = true;
+        }
+      }
+    }
+  });
+  // すべてのテクスチャの付け替えが済んでから、元画像を解放する
+  imgMap.forEach((out, img) => {
+    if (out !== img && img.close) { try { img.close(); } catch (e) {} }
+  });
+}
+
+// 環境マップ（金属・鏡面系マテリアルは環境が無いと真っ黒になるため、簡易的な空の反射を用意する）
+function makeEnvTexture(renderer) {
+  try {
+    const pm = new THREE.PMREMGenerator(renderer);
+    const envScene = new THREE.Scene();
+    const R = 50;
+    const geo = new THREE.SphereGeometry(R, 32, 16);
+    const pos = geo.attributes.position;
+    const cols = [];
+    const sky = new THREE.Color(0x5b9bd8), hor = new THREE.Color(0xe6eef7), gnd = new THREE.Color(0x6b7480);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i) / R;
+      if (y >= 0) c.copy(hor).lerp(sky, Math.pow(y, 0.6));
+      else c.copy(hor).lerp(gnd, Math.min(1, -y * 1.6));
+      cols.push(c.r, c.g, c.b);
+    }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    envScene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+    const sun = new THREE.Mesh(new THREE.SphereGeometry(7, 16, 8),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 6, 5.5) }));
+    sun.position.set(18, 36, 24);
+    envScene.add(sun);
+    const tex = pm.fromScene(envScene, 0.02).texture;
+    pm.dispose();
+    return tex;
+  } catch (e) {
+    console.warn('env map failed', e);
+    return null;
+  }
+}
+
+async function buildModelWrapper(gltf, typeCode) {
+  downscaleModelTextures(gltf.scene, MODEL_TEXTURE_MAX);
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mat of mats) {
+      if (mat && mat.isMeshStandardMaterial) mat.envMapIntensity = 1.0;
+    }
+  });
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const real = getModelRealSize(typeCode);
+  const baseScale = real.size / maxDim;   // 最大寸法が実寸(m)になるように正規化
+
+  const wrapper = new THREE.Group();
+  wrapper.userData.realSize = real.size;
+  wrapper.userData.sizeKnown = real.known;
+  gltf.scene.scale.setScalar(baseScale);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  gltf.scene.position.sub(center.multiplyScalar(baseScale));
+  wrapper.add(gltf.scene);
+
+  // ---- ポリゴン削減とLOD（遠距離用の簡略モデル）の生成 ----
+  const preset = QUALITY_PRESETS[state.quality] || QUALITY_PRESETS.standard;
+  const meshes = collectMeshes(wrapper);
+  const canSimp = meshes.map(canSimplifyMesh);
+  let total = 0;
+  meshes.forEach((m, i) => { if (canSimp[i]) total += geoTriCount(m.geometry); });
+  wrapper.userData.srcTris = total;
+
+  let variants = [wrapper];
+  if (total > 0) {
+    const r0 = Math.min(1, preset.cap / total);
+    let geos = meshes.map((m) => m.geometry);
+    if (r0 < 1) {
+      const reduced = await buildReducedGeometries(geos, canSimp, r0);
+      meshes.forEach((m, i) => {
+        if (reduced[i] !== m.geometry) { m.geometry.dispose(); m.geometry = reduced[i]; }
+      });
+      geos = reduced;
+    }
+    const lvl0Tris = Math.min(total, preset.cap);
+    wrapper.userData.tris = lvl0Tris;
+    if (preset.lod && lvl0Tris > LOD_MIN_TRIS) {
+      let prev = geos;
+      for (const ratio of LOD_RATIOS) {
+        const g = await buildReducedGeometries(prev, canSimp, ratio);
+        const v = wrapper.clone();           // 材質・テクスチャは共有（メモリは増えない）
+        const vm = collectMeshes(v);
+        vm.forEach((m, i) => { m.geometry = g[i]; });
+        variants.push(v);
+        prev = g;
+      }
+    }
+  }
+  return { wrapper, variants };
+}
+
+function disposeModelScene(m) {
+  if (!m || !m.scene) return;
+  const roots = (m.variants && m.variants.length) ? m.variants : [m.scene];
+  for (const root of roots) {
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const mat of mats) {
+          for (const k in mat) {
+            const v = mat[k];
+            if (v && v.isTexture) v.dispose();
+          }
+          mat.dispose();
+        }
+      }
+    });
+  }
+  m.scene = null;
+  m.variants = null;
+}
+
+// ポリゴン設定の変更: 読み込み済みモデルを破棄して、新しい設定で作り直す
+async function onQualityChange(v) {
+  if (!QUALITY_PRESETS[v]) return;
+  state.quality = v;
+  saveSetting('fr_quality', v);
+  state.models.forEach((m) => { disposeModelScene(m); m.failed = false; });
+  nearbyCache.clear();
+  if (nearbyPlanesGroup) {
+    while (nearbyPlanesGroup.children.length > 0) nearbyPlanesGroup.remove(nearbyPlanesGroup.children[0]);
+  }
+  if (state.is3DMode && state.sceneReady && state.selectedIcao) {
+    const f = state.flights.get(state.selectedIcao);
+    if (f) {
+      showToast('3Dモデルを再構築中...');
+      await ensureModelLoaded(f.type);
+      showToast('', false);
+      if (state.is3DMode) rebuild3DModels();
+    }
+  } else {
+    selectPreviewModel();
+  }
+}
+
+function evictModels(keepType) {
+  const loaded = [];
+  state.models.forEach((m, k) => { if (m.scene) loaded.push([k, m]); });
+  if (loaded.length <= MAX_LOADED_MODELS) return;
+  const inUse = new Set([keepType]);
+  if (state.is3DMode && state.selectedIcao) {
+    const sf = state.flights.get(state.selectedIcao);
+    if (sf) inUse.add(sf.type);
+  }
+  nearbyCache.forEach((c) => { if (c.userData && c.userData.modelType) inUse.add(c.userData.modelType); });
+  const pv = document.getElementById('set-model-select');
+  if (pv && pv.value) inUse.add(pv.value);
+
+  const cands = loaded.filter(([k]) => !inUse.has(k)).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  let remaining = loaded.length;
+  for (const [, m] of cands) {
+    if (remaining <= MAX_LOADED_MODELS) break;
+    disposeModelScene(m);
+    remaining--;
+  }
+}
+
+let modelQueue = Promise.resolve();
+function ensureModelLoaded(typeCode) {
+  const m = state.models.get(typeCode);
+  if (!m) return Promise.resolve(false);
+  m.lastUsed = performance.now();
+  if (m.scene) return Promise.resolve(true);
+  if (m.loading) return m.loading;
+
+  const task = async () => {
+    try {
+      if (m.scene) return true;
+      let buf;
+      if (m.source && m.source.file) {
+        buf = await m.source.file.arrayBuffer();
+      } else {
+        const r = await fetch(m.source.url);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        buf = await r.arrayBuffer();
+      }
+      const gltf = await new Promise((res, rej) => gltfLoader.parse(buf, '', res, rej));
+      buf = null;
+      const built = await buildModelWrapper(gltf, typeCode);
+      m.scene = built.wrapper;
+      m.variants = built.variants;
+      m.lastUsed = performance.now();
+      m.failed = false;
+      evictModels(typeCode);
+      return true;
+    } catch (err) {
+      console.warn('GLB load failed:', typeCode, err);
+      m.failed = true;
+      return false;
+    } finally {
+      m.loading = null;
+    }
+  };
+  // 複数のGLBを同時に展開するとメモリが跳ねるので、順番に1つずつ処理する
+  m.loading = modelQueue.then(task, task);
+  modelQueue = m.loading.catch(() => {});
+  return m.loading;
+}
+
+function extractTimestampFromFilename(filename) {
+  const m = filename.match(/(\d{10,13})/);
+  if (m) {
+    const val = Number(m[1]);
+    return val > 1e12 ? val / 1000 : val;
+  }
+  const base = 1700000000 + state.snapshotSeqCounter * 5;
+  state.snapshotSeqCounter++;
+  return base;
+}
+
+async function decodeJsonOrGzip(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    const ds = new DecompressionStream('gzip');
+    const stream = new Blob([buffer]).stream().pipeThrough(ds);
+    return await new Response(stream).text();
+  }
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+const CS_POOL = [''];
+const CS_INDEX = new Map([['', 0]]);
+function csId(str) {
+  if (!str) return 0;
+  let i = CS_INDEX.get(str);
+  if (i === undefined) {
+    i = CS_POOL.length;
+    CS_POOL.push(str);
+    CS_INDEX.set(str, i);
+  }
+  return i;
+}
+
+// 1機ごとの軌跡は「オブジェクトの配列」ではなく型付き配列(列指向)で持つ。
+// 1点あたり約31バイト（オブジェクト配列だと100バイト以上）。
+// lat/lon は 1e-6 度の整数、hdg は 0.1 度単位の整数で保持。
+// fl: bit0=stale, bit1=新しい区間の開始, bit4(16)=地上
+function growFlight(f, minCap) {
+  const newCap = Math.max(8, minCap, Math.ceil(f.cap * 1.5));
+  const g = (Old, Ctor) => {
+    const a = new Ctor(newCap);
+    if (Old) a.set(Old.subarray(0, f.n));
+    return a;
+  };
+  f.t = g(f.t, Float64Array);
+  f.lat = g(f.lat, Int32Array);
+  f.lon = g(f.lon, Int32Array);
+  f.alt = g(f.alt, Int32Array);
+  f.spd = g(f.spd, Uint16Array);
+  f.hdg = g(f.hdg, Uint16Array);
+  f.vr = g(f.vr, Int16Array);
+  f.fl = g(f.fl, Uint8Array);
+  f.cs = g(f.cs, Uint32Array);
+  f.cap = newCap;
+}
+
+function addPoint(f, t, lat, lon, altFt, ground, spd, hdg, flags, vrate, callsign) {
+  // NaN / Infinity の混入防止（時刻が壊れると表示が凍結する原因になる）
+  if (!isFinite(t) || !isFinite(lat) || !isFinite(lon)) return;
+
+  const thin = state.thinSec;
+  if (thin > 0 && f.n > 0 && !(flags & 2) && Math.abs(t - f.t[f.n - 1]) < thin * 0.8) return; // 5秒周期データの揺らぎで間引きすぎないよう0.8倍
+  if (f.n >= f.cap) growFlight(f, f.n + 1);
+  const i = f.n;
+  if (i > 0 && t < f.t[i - 1]) f.unsorted = true;
+  f.t[i] = t;
+  f.lat[i] = Math.round(lat * 1e6);
+  f.lon[i] = Math.round(lon * 1e6);
+  f.alt[i] = Math.round(altFt);
+  f.spd[i] = Math.max(0, Math.min(65535, Math.round(spd)));
+  let h = hdg % 360;
+  if (h < 0) h += 360;
+  f.hdg[i] = Math.round(h * 10) % 3600;
+  f.vr[i] = Math.max(-32768, Math.min(32767, Math.round(vrate)));
+  f.fl[i] = (flags & 3) | (ground ? 16 : 0);
+  f.cs[i] = csId(callsign);
+  f.n = i + 1;
+}
+
+function ensureFlightEntry(icao, reg, type, desc) {
+  const cleanIcao = String(icao).toLowerCase().trim();
+  if (!state.flights.has(cleanIcao)) {
+    state.flights.set(cleanIcao, {
+      icao: cleanIcao,
+      reg: (reg || cleanIcao).toUpperCase().trim(),
+      type: (type || 'UNKNOWN').toUpperCase().trim(),
+      desc: (desc || 'Unknown Aircraft').trim(),
+      n: 0, cap: 0, unsorted: false, _cur: 0, callsignText: '',
+      t: null, lat: null, lon: null, alt: null, spd: null, hdg: null, vr: null, fl: null, cs: null
+    });
+  }
+  const entry = state.flights.get(cleanIcao);
+  if (reg && entry.reg === cleanIcao.toUpperCase()) entry.reg = String(reg).toUpperCase().trim();
+  if (type && entry.type === 'UNKNOWN') entry.type = String(type).toUpperCase().trim();
+  if (desc && (entry.desc === 'Unknown Aircraft' || entry.desc === 'Aircraft')) entry.desc = String(desc).trim();
+  return entry;
+}
+
+function parseTraceFull(raw) {
+  const entry = ensureFlightEntry(raw.icao, raw.r, raw.t, raw.desc);
+  let baseTs = Number(raw.timestamp) || 0;   // ← 修正
+  if (baseTs > 1e12) baseTs /= 1000;  // ミリ秒単位のタイムスタンプを秒に正規化
+  let lastCallsign = '';
+
+  for (let i = 0; i < raw.trace.length; i++) {
+    const row = raw.trace[i];
+    const lat = row[1];
+    const lon = row[2];
+    if (typeof lat !== 'number' || typeof lon !== 'number') continue;
+
+    const absTime = baseTs + (Number(row[0]) || 0);  // ← 修正
+    const rawAlt = row[3];
+    const isGround = rawAlt === 'ground';
+    const altFt = isGround ? 0 : (typeof rawAlt === 'number' ? rawAlt : 0);
+    const flags = row[6] || 0;
+
+    if (row[8] && typeof row[8] === 'object' && row[8].flight) {
+      lastCallsign = String(row[8].flight).trim();
+    }
+
+    addPoint(entry, absTime, lat, lon, altFt, isGround,
+      typeof row[4] === 'number' ? row[4] : 0,
+      typeof row[5] === 'number' ? row[5] : 0,
+      flags,
+      typeof row[7] === 'number' ? row[7] : 0,
+      lastCallsign);
+  }
+}
+
+function parseSnapshotList(list, ts) {
+  for (const ac of list) {
+    if (!ac || !ac.hex) continue;
+    const lat = ac.lat;
+    const lon = ac.lon;
+    if (typeof lat !== 'number' || typeof lon !== 'number') continue;
+
+    const desc = ac.desc || [ac.t, ac.r].filter(Boolean).join(' ') || 'Aircraft';
+    const entry = ensureFlightEntry(ac.hex, ac.r || ac.reg, ac.t || ac.type, desc);
+
+    const rawAlt = ac.alt_baro !== undefined ? ac.alt_baro : ac.altitude;
+    const isGround = rawAlt === 'ground';
+    const altFt = isGround ? 0 : (typeof rawAlt === 'number' ? rawAlt : 0);
+
+    addPoint(entry, ts, lat, lon, altFt, isGround,
+      typeof ac.gs === 'number' ? ac.gs : (typeof ac.speed === 'number' ? ac.speed : 0),
+      typeof ac.track === 'number' ? ac.track : (typeof ac.heading === 'number' ? ac.heading : 0),
+      0,
+      typeof ac.baro_rate === 'number' ? ac.baro_rate : 0,
+      ac.flight ? String(ac.flight).trim() : '');
+  }
+}
+
+// 追記された点をソートし、配列を実サイズに詰め直す（メモリ節約）
+function finalizeFlight(f) {
+  const n = f.n;
+  if (!n) return;
+  let order = null;
+  if (f.unsorted) {
+    order = new Uint32Array(n);
+    for (let i = 0; i < n; i++) order[i] = i;
+    const T = f.t;
+    order.sort((a, b) => T[a] - T[b]);
+  }
+  if (!order && f.cap === n) return;
+
+  let ids = null;
+  let m = n;
+  if (order) {
+    ids = new Uint32Array(n);
+    m = 0;
+    const minI = state.thinSec;
+    let lastT = -Infinity;
+    for (let k = 0; k < n; k++) {
+      const i = order[k];
+      const t = f.t[i];
+      if (minI > 0 && m > 0 && (t - lastT) < minI * 0.8 && !(f.fl[i] & 2)) continue;
+      ids[m++] = i;
+      lastT = t;
+    }
+  }
+  const sel = (Old, Ctor) => {
+    const a = new Ctor(m);
+    if (ids) { for (let k = 0; k < m; k++) a[k] = Old[ids[k]]; }
+    else a.set(Old.subarray(0, m));
+    return a;
+  };
+  f.t = sel(f.t, Float64Array);
+  f.lat = sel(f.lat, Int32Array);
+  f.lon = sel(f.lon, Int32Array);
+  f.alt = sel(f.alt, Int32Array);
+  f.spd = sel(f.spd, Uint16Array);
+  f.hdg = sel(f.hdg, Uint16Array);
+  f.vr = sel(f.vr, Int16Array);
+  f.fl = sel(f.fl, Uint8Array);
+  f.cs = sel(f.cs, Uint32Array);
+  f.n = m;
+  f.cap = m;
+  f.unsorted = false;
+  f._cur = 0;
+}
+
+// 気圧高度は日々の気圧(QNH)で数十〜百m以上ズレるため、離着陸時の「地上フラグ直前直後の気圧高度」から
+// その機体の地面の高度(ft)を推定する。推定できない機体は全機の中央値を使う。
+function estimateBaroOffset(f) {
+  const est = [];
+  for (let i = 0; i < f.n - 1; i++) {
+    const g0 = (f.fl[i] & 16) !== 0, g1 = (f.fl[i + 1] & 16) !== 0;
+    if (g0 === g1) continue;
+    const a = g0 ? i + 1 : i;   // 空中側
+    const g = g0 ? i : i + 1;   // 地上側
+    if (f.fl[i + 1] & 2) continue;
+    const dt = f.t[g] - f.t[a];
+    if (Math.abs(dt) > 40) continue;
+    if (f.alt[a] === 0 && f.vr[a] === 0) continue;   // 高度データ無し
+    let ext = f.vr[a] * dt / 60;
+    ext = Math.max(-150, Math.min(150, ext));
+    const altG = f.alt[a] + ext;
+    if (altG < -2500 || altG > 8000) continue;
+    est.push(altG);
+  }
+  if (!est.length) return null;
+  est.sort((x, y) => x - y);
+  return est[est.length >> 1];
+}
+
+function finalizeImportedData() {
+  state.globalMinTime = Infinity;
+  state.globalMaxTime = -Infinity;
+
+  state.flights.forEach((flight, icao) => {
+    if (!flight.n) {
+      state.flights.delete(icao);
+      return;
+    }
+    finalizeFlight(flight);
+    flight.baroOffOwn = estimateBaroOffset(flight);
+    const seen = new Set();
+    const parts = [];
+    for (let i = 0; i < flight.n; i++) {
+      const c = flight.cs[i];
+      if (c && !seen.has(c)) { seen.add(c); parts.push(CS_POOL[c].toLowerCase()); }
+    }
+    flight.callsignText = parts.join(' ');
+    const minT = flight.t[0];
+    const maxT = flight.t[flight.n - 1];
+    if (minT < state.globalMinTime) state.globalMinTime = minT;
+    if (maxT > state.globalMaxTime) state.globalMaxTime = maxT;
+  });
+
+  const offs = [];
+  state.flights.forEach((fl) => { if (fl.baroOffOwn !== null && fl.baroOffOwn !== undefined) offs.push(fl.baroOffOwn); });
+  offs.sort((a, b) => a - b);
+  const globalOff = offs.length ? offs[offs.length >> 1] : 0;
+  state.flights.forEach((fl) => {
+    fl.baroOff = (fl.baroOffOwn !== null && fl.baroOffOwn !== undefined) ? fl.baroOffOwn : globalOff;
+  });
+
+  if (isFinite(state.globalMinTime)) {
+    if (!isFinite(state.currentTime) || state.currentTime < state.globalMinTime) {
+      state.currentTime = state.globalMinTime;
+    }
+  } else {
+    state.currentTime = 0;
+  }
+
+  updateImportUI();
+  updateSettingsModelList();
+  timelineDirty = true;
+  drawModelFlightTimeline();
+  invalidateRadar();
+}
+
+function updateImportUI() {
+  let total = 0;
+  state.flights.forEach((f) => { total += f.n; });
+  document.getElementById('stat-files').textContent = `${state.importedFileCount} 件`;
+  document.getElementById('stat-flights').textContent = `${state.flights.size} 機`;
+  document.getElementById('stat-points').textContent = `${total.toLocaleString()} 点`;
+
+  // データの時間範囲を表示（デバッグ用・時間が進かない原因の特定に使う）
+  const rangeEl = document.getElementById('stat-time-range');
+  if (rangeEl) {
+    if (state.flights.size > 0 && isFinite(state.globalMinTime)
+        && state.globalMaxTime > state.globalMinTime) {
+      const durMin = Math.round((state.globalMaxTime - state.globalMinTime) / 60);
+      rangeEl.textContent =
+        `${formatJSTShort(state.globalMinTime)} 〜 ${formatJSTShort(state.globalMaxTime)}（${durMin}分間）`;
+    } else if (state.flights.size > 0) {
+      rangeEl.textContent = '⚠️ 全データが同一時刻';
+    } else {
+      rangeEl.textContent = '---';
+    }
+  }
+  document.getElementById('stat-models').textContent = `${state.models.size} 種類`;
+  const modelNames = Array.from(state.models.keys()).join(', ');
+  document.getElementById('loaded-model-list').textContent = modelNames ? `登録済モデル: ${modelNames}` : '';
+
+  const hasFlights = state.flights.size > 0;
+  document.getElementById('btn-inspect-import').disabled = !hasFlights;
+  document.getElementById('btn-start-radar').disabled = !hasFlights;
+}
+
+/**
+ * 3Dモデル対応機の飛行時間を時間バーに表示
+ */
+function initFlightTimelineCanvas() {
+  const cvs = document.getElementById('model-flight-canvas');
+  cvs.addEventListener('click', (e) => {
+    if (!(state.globalMaxTime > state.globalMinTime)) return;
+    const rect = cvs.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+    state.currentTime = state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio;
+    drawModelFlightTimeline();
+  });
+}
+
+let timelineDirty = true;
+let timelineCache = null;
+let timelineCacheSel = null;
+
+function drawModelFlightTimeline() {
+  const cvs = document.getElementById('model-flight-canvas');
+  if (!cvs) return;
+  const rect = cvs.getBoundingClientRect();
+  const w = Math.max(100, Math.floor(rect.width || cvs.parentElement.clientWidth || 300));
+  const h = 14;
+  if (cvs.width !== w || cvs.height !== h) {
+    cvs.width = w;
+    cvs.height = h;
+    timelineDirty = true;
+  }
+  if (timelineCacheSel !== state.selectedIcao) timelineDirty = true;
+
+  const ctx = cvs.getContext('2d');
+  const span = state.globalMaxTime - state.globalMinTime;
+  const summaryEl = document.getElementById('model-flight-summary');
+
+  if (state.flights.size === 0) {
+    ctx.clearRect(0, 0, w, h);
+    summaryEl.textContent = '3D対応飛行帯: データなし';
+    timelineDirty = true;
+    return;
+  }
+  if (!(span > 0)) {
+    ctx.clearRect(0, 0, w, h);
+    summaryEl.textContent = '⚠️ 全データが同一時刻です。時間を進めるには複数の時刻を含むファイルを読み込んでください。';
+    timelineDirty = true;
+    return;
+  }
+
+  const toX = (t) => Math.max(0, Math.min(w, ((t - state.globalMinTime) / span) * w));
+
+  if (timelineDirty || !timelineCache || timelineCache.width !== w) {
+    timelineCache = document.createElement('canvas');
+    timelineCache.width = w;
+    timelineCache.height = h;
+    const c = timelineCache.getContext('2d');
+
+    let has3DFlightCount = 0;
+    let min3DT = Infinity;
+    let max3DT = -Infinity;
+
+    c.fillStyle = 'rgba(245, 158, 11, 0.72)';
+    state.flights.forEach((flight) => {
+      if (!flight.n || !state.models.has(flight.type)) return;
+      has3DFlightCount++;
+      const T = flight.t;
+      const n = flight.n;
+      const fStart = T[0];
+      const fEnd = T[n - 1];
+      if (fStart < min3DT) min3DT = fStart;
+      if (fEnd > max3DT) max3DT = fEnd;
+
+      let segStart = T[0];
+      let prevT = T[0];
+      for (let i = 1; i < n; i++) {
+        const t = T[i];
+        if (t - prevT > GAP_SEC || (flight.fl[i] & 2)) {
+          const x1 = toX(segStart);
+          const x2 = Math.max(x1 + 2, toX(prevT));
+          c.fillRect(x1, 2, x2 - x1, h - 4);
+          segStart = t;
+        }
+        prevT = t;
+      }
+      const x1 = toX(segStart);
+      const x2 = Math.max(x1 + 2, toX(prevT));
+      c.fillRect(x1, 2, x2 - x1, h - 4);
+    });
+
+    if (state.selectedIcao && state.flights.has(state.selectedIcao)) {
+      const sel = state.flights.get(state.selectedIcao);
+      c.fillStyle = 'rgba(56, 189, 248, 0.95)';
+      for (let i = 0; i < sel.n; i++) {
+        c.fillRect(toX(sel.t[i]) - 1, 0, 2.5, h);
+      }
+    }
+
+    if (has3DFlightCount > 0 && min3DT < Infinity) {
+      summaryEl.textContent = `3D対応(${has3DFlightCount}機): ${formatJSTShort(min3DT)}〜${formatJSTShort(max3DT)}`;
+    } else {
+      summaryEl.textContent = state.models.size === 0 ? '3Dモデル(.glb)未読込' : '3D対応機体の飛行なし';
+    }
+    timelineCacheSel = state.selectedIcao;
+    timelineDirty = false;
+  }
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(timelineCache, 0, 0);
+  const curX = toX(state.currentTime);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(curX - 1, 0, 2, h);
+}
+
+function formatJSTShort(unixSec) {
+  if (!isFinite(unixSec)) return '--:--:--';
+  const d = new Date(unixSec * 1000);
+  if (isNaN(d.getTime())) return '--:--:--';
+  const jst = new Date(d.getTime() + 9 * 3600 * 1000);
+  const hh = String(jst.getUTCHours()).padStart(2, '0');
+  const mm = String(jst.getUTCMinutes()).padStart(2, '0');
+  const ss = String(jst.getUTCSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * 読込ファイル内の機体確認（20機未満 / 20機以上）
+ */
+function openAircraftInspector() {
+  if (state.flights.size === 0) return;
+  document.getElementById('aircraft-inspector-modal').classList.add('active');
+
+  const allFlights = Array.from(state.flights.values());
+  const isBulk = allFlights.length >= 20;
+
+  const banner = document.getElementById('inspector-mode-banner');
+  const searchArea = document.getElementById('inspector-search-area');
+  const listArea = document.getElementById('inspector-list-area');
+
+  if (isBulk) {
+    banner.textContent = `全 ${allFlights.length} 機検出（20機以上のため検索・選択モード）`;
+    searchArea.style.display = 'flex';
+    listArea.style.display = 'none';
+    document.getElementById('inspector-search-input').value = '';
+    renderInspectorSelection();
+  } else {
+    banner.textContent = `全 ${allFlights.length} 機検出（20機未満のため一覧表示）`;
+    searchArea.style.display = 'none';
+    listArea.style.display = 'flex';
+    renderInspectorList(allFlights);
+    if (!state.inspectedIcao || !state.flights.has(state.inspectedIcao)) {
+      state.inspectedIcao = allFlights[0] ? allFlights[0].icao : null;
+    }
+    if (state.inspectedIcao) {
+      renderInspectorList(allFlights);
+      showInspectorDetail(state.inspectedIcao);
+    }
+  }
+}
+
+function closeAircraftInspector() {
+  document.getElementById('aircraft-inspector-modal').classList.remove('active');
+}
+
+function renderInspectorList(list) {
+  const container = document.getElementById('inspector-list-area');
+  container.innerHTML = '';
+  list.forEach((f) => {
+    const item = document.createElement('button');
+    item.className = 'ac-list-item' + (state.inspectedIcao === f.icao ? ' active' : '');
+    item.innerHTML = `
+      <div>
+        <div style="font-weight:700; color:var(--accent);">${escapeHtml(f.reg)} <span class="badge">${escapeHtml(f.type)}</span></div>
+        <div style="font-size:11px; color:var(--text-muted);">${escapeHtml(f.desc)}</div>
+      </div>
+      <div style="font-size:11px; font-family:monospace; color:var(--accent-blue);">${f.n}点</div>
+    `;
+    item.onclick = () => {
+      state.inspectedIcao = f.icao;
+      renderInspectorList(list);
+      showInspectorDetail(f.icao);
+    };
+    container.appendChild(item);
+  });
+}
+
+function renderInspectorSelection() {
+  const query = document.getElementById('inspector-search-input').value.trim().toLowerCase();
+  const sel = document.getElementById('inspector-select');
+  const allFlights = Array.from(state.flights.values());
+
+  const filtered = query
+    ? allFlights.filter(f =>
+        f.type.toLowerCase().includes(query) ||
+        f.reg.toLowerCase().includes(query) ||
+        f.icao.toLowerCase().includes(query) ||
+        f.desc.toLowerCase().includes(query) ||
+        (f.callsignText || '').includes(query)
+      )
+    : allFlights;
+  const MAX_OPTIONS = 400;
+  const shown = filtered.slice(0, MAX_OPTIONS);
+
+  sel.innerHTML = '';
+  if (filtered.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '該当する機体が見つかりません';
+    sel.appendChild(opt);
+    document.getElementById('inspector-detail-area').style.display = 'none';
+    return;
+  }
+
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = filtered.length > MAX_OPTIONS
+    ? `-- ${filtered.length} 機中 先頭${MAX_OPTIONS}機を表示（検索で絞り込み） --`
+    : `-- ${filtered.length} 機から選択（例: 767など） --`;
+  sel.appendChild(defaultOpt);
+
+  shown.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f.icao;
+    opt.textContent = `${f.type} | ${f.reg} (${f.icao}) - ${f.n}点`;
+    sel.appendChild(opt);
+  });
+
+  if (state.inspectedIcao && shown.some(f => f.icao === state.inspectedIcao)) {
+    sel.value = state.inspectedIcao;
+    showInspectorDetail(state.inspectedIcao);
+  } else {
+    document.getElementById('inspector-detail-area').style.display = 'none';
+  }
+}
+
+function onInspectorSelectChange() {
+  const icao = document.getElementById('inspector-select').value;
+  state.inspectedIcao = icao || null;
+  if (!icao) {
+    document.getElementById('inspector-detail-area').style.display = 'none';
+    return;
+  }
+  showInspectorDetail(icao);
+}
+
+function showInspectorDetail(icao) {
+  const f = state.flights.get(icao);
+  if (!f || !f.n) return;
+
+  const li = f.n - 1;
+  let callsign = '---';
+  for (let i = li; i >= 0; i--) {
+    if (f.cs[i]) { callsign = CS_POOL[f.cs[i]]; break; }
+  }
+  const isGround = (f.fl[li] & 16) !== 0;
+
+  document.getElementById('inspector-detail-area').style.display = 'block';
+  document.getElementById('insp-title').textContent = `${f.reg} / ${f.type}`;
+  document.getElementById('insp-type-badge').textContent = f.icao.toUpperCase();
+  document.getElementById('insp-desc').textContent = f.desc;
+  document.getElementById('insp-icao').textContent = f.icao.toUpperCase();
+  document.getElementById('insp-reg').textContent = f.reg;
+  document.getElementById('insp-type').textContent = f.type;
+  document.getElementById('insp-callsign').textContent = callsign;
+  document.getElementById('insp-count').textContent = `${f.n} 件`;
+  document.getElementById('insp-alt-spd').textContent =
+    `${isGround ? 'GND' : f.alt[li].toLocaleString() + ' ft'} / ${f.spd[li]} kt`;
+  document.getElementById('insp-pos').textContent = `${(f.lat[li] / 1e6).toFixed(3)}, ${(f.lon[li] / 1e6).toFixed(3)}`;
+  document.getElementById('insp-model').textContent = state.models.has(f.type) ? `あり (${f.type}.glb)` : 'なし';
+}
+
+function jumpToRadarWithSelected() {
+  if (!state.inspectedIcao) return;
+  const f = state.flights.get(state.inspectedIcao);
+  closeAircraftInspector();
+  document.getElementById('settings-screen').classList.remove('active');
+  enterRadarScreen();
+  if (f && f.n > 0) {
+    state.currentTime = f.t[0];
+    map.setView([f.lat[0] / 1e6, f.lon[0] / 1e6], 8);
+    selectAircraft(f.icao);
+    drawModelFlightTimeline();
+  }
+}
+
+function jumpTo3DWithSelected() {
+  if (!state.inspectedIcao) return;
+  const f = state.flights.get(state.inspectedIcao);
+  closeAircraftInspector();
+  document.getElementById('settings-screen').classList.remove('active');
+  enterRadarScreen();
+  if (f && f.n > 0) {
+    state.currentTime = f.t[0];
+    selectAircraft(f.icao);
+    enter3DView();
+  }
+}
+
+/**
+ * 時間補間エンジン
+ */
+function getInterpolatedState(f, time, out) {
+  const n = f.n;
+  if (!n) return null;
+  const T = f.t;
+  if (time < T[0] || time > T[n - 1]) return null;
+
+  // 前回位置を起点に探す（再生中はほぼO(1)）。外れたら二分探索
+  let i = f._cur;
+  if (!(i < n && T[i] <= time && (i === n - 1 || T[i + 1] > time))) {
+    let lo = 0, hi = n - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (T[mid] <= time) lo = mid + 1;
+      else hi = mid - 1;
+    }
+    i = hi < 0 ? 0 : (hi > n - 1 ? n - 1 : hi);
+    f._cur = i;
+  }
+
+  const r = out || {};
+  const g0 = (f.fl[i] & 16) !== 0;
+
+  const bOff = f.baroOff || 0;
+  if (i >= n - 1) {
+    r.altG = g0 ? bOff : f.alt[i];
+    r.lat = f.lat[i] / 1e6; r.lon = f.lon[i] / 1e6; r.altFt = f.alt[i]; r.isGround = g0;
+    r.spd = f.spd[i]; r.hdg = f.hdg[i] / 10; r.vrate = f.vr[i]; r.callsign = CS_POOL[f.cs[i]];
+    r.hrate = 0; r.vs = f.vr[i];
+    return r;
+  }
+
+  const j = i + 1;
+  const dt = T[j] - T[i];
+  const stale = (f.fl[j] & 2) !== 0 || dt > GAP_SEC || dt <= 0;
+  if (stale) {
+    if (time - T[i] <= 15) {
+      r.altG = g0 ? bOff : f.alt[i];
+      r.lat = f.lat[i] / 1e6; r.lon = f.lon[i] / 1e6; r.altFt = f.alt[i]; r.isGround = g0;
+      r.spd = f.spd[i]; r.hdg = f.hdg[i] / 10; r.vrate = f.vr[i]; r.callsign = CS_POOL[f.cs[i]];
+      r.hrate = 0; r.vs = f.vr[i];
+      return r;
+    }
+    return null;
+  }
+
+  const k = (time - T[i]) / dt;
+  const h0 = f.hdg[i] / 10;
+  const h1 = f.hdg[j] / 10;
+  const dh = ((h1 - h0 + 540) % 360) - 180;
+
+  r.lat = (f.lat[i] + (f.lat[j] - f.lat[i]) * k) / 1e6;
+  r.lon = (f.lon[i] + (f.lon[j] - f.lon[i]) * k) / 1e6;
+  r.altFt = f.alt[i] + (f.alt[j] - f.alt[i]) * k;
+  const aG0 = g0 ? bOff : f.alt[i];
+  const aG1 = (f.fl[j] & 16) !== 0 ? bOff : f.alt[j];
+  r.altG = aG0 + (aG1 - aG0) * k;
+  r.isGround = g0 && (f.fl[j] & 16) !== 0;
+  r.spd = f.spd[i] + (f.spd[j] - f.spd[i]) * k;
+  r.hdg = (h0 + dh * k + 360) % 360;
+  r.vrate = f.vr[i] + (f.vr[j] - f.vr[i]) * k;
+  r.callsign = CS_POOL[f.cs[i] || f.cs[j]];
+
+  // 3D表示の機体姿勢用: 旋回率(deg/s)と昇降率(ft/min)
+  let hr = dh / dt;
+  r.hrate = hr > 10 ? 10 : (hr < -10 ? -10 : hr);
+  // 昇降率データが無い(0)場合は、高度の変化から求める
+  r.vs = (f.vr[i] || f.vr[j]) ? r.vrate : (f.alt[j] - f.alt[i]) / dt * 60;
+  return r;
+}
+
+/**
+ * フライトレーダー画面 (2D)
+ */
+function enterRadarScreen() {
+  document.getElementById('import-screen').classList.remove('active');
+  document.getElementById('radar-screen').classList.add('active');
+
+  if (!map) {
+    initMap();
+  }
+
+  if (state.globalMinTime < Infinity && !state.selectedIcao) {
+    let focus = null;
+    const tmp = {};
+    for (const flight of state.flights.values()) {
+      const it = getInterpolatedState(flight, state.currentTime, tmp);
+      if (it) { focus = [it.lat, it.lon]; break; }
+    }
+    if (!focus) {
+      const firstFlight = state.flights.values().next().value;
+      if (firstFlight && firstFlight.n > 0) {
+        focus = [firstFlight.lat[0] / 1e6, firstFlight.lon[0] / 1e6];
+      }
+    }
+    if (focus) map.setView(focus, 7);
+  }
+
+  requestAnimationFrame(() => {
+    if (map) {
+      map.invalidateSize(true);
+    }
+    timelineDirty = true;
+    drawModelFlightTimeline();
+    invalidateRadar();
+  });
+}
+
+let baseLayers = [];
+let acCanvas = null, acCtx = null, acDpr = 1;
+let zooming = false;
+let radarSig = '', radarLastDraw = 0, radarLastCount = -1;
+const acHits = [];
+let acHitsLen = 0;
+let zoomStartedAt = 0;
+const PLANE_PATH = new Path2D('M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z');
+const radarTmp = {};
+const selTmp = {};
+
+function invalidateRadar() {
+  radarSig = '';
+  radarLastDraw = 0;
+}
+
+function applyBaseMap() {
+  if (!map) return;
+  baseLayers.forEach(l => map.removeLayer(l));
+  baseLayers = [];
+  const cfg = BASEMAPS[state.baseMap] || BASEMAPS.dark;
+  const main = L.tileLayer(cfg.url, { maxZoom: 18, maxNativeZoom: cfg.maxNativeZoom, zIndex: 1 });
+  main.addTo(map);
+  baseLayers.push(main);
+  if (cfg.labels) {
+    const lab = L.tileLayer(cfg.labels, { maxZoom: 18, maxNativeZoom: cfg.maxNativeZoom, zIndex: 2 });
+    lab.addTo(map);
+    baseLayers.push(lab);
+  }
+}
+
+function resizeAircraftCanvas() {
+  if (!acCanvas || !map) return;
+  const sz = map.getSize();
+  acDpr = Math.min(window.devicePixelRatio || 1, 2);
+  acCanvas.width = Math.max(1, Math.round(sz.x * acDpr));
+  acCanvas.height = Math.max(1, Math.round(sz.y * acDpr));
+  acCanvas.style.width = sz.x + 'px';
+  acCanvas.style.height = sz.y + 'px';
+  invalidateRadar();
+}
+
+function initMap() {
+  const mapEl = document.getElementById('map');
+  map = L.map(mapEl, {
+    zoomControl: false,
+    attributionControl: false
+  }).setView([34.39, 132.45], 6);
+
+  applyBaseMap();
+
+  // 機体は1枚のCanvasにまとめて描く（DOMマーカーを使わない）
+  acCanvas = document.createElement('canvas');
+  acCanvas.style.cssText = 'position:absolute; left:0; top:0; pointer-events:none; z-index:450;';
+  map.getContainer().appendChild(acCanvas);
+  acCtx = acCanvas.getContext('2d');
+  resizeAircraftCanvas();
+
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => {
+      if (map) map.invalidateSize();
+      timelineDirty = true;
+      drawModelFlightTimeline();
+    });
+    ro.observe(mapEl);
+  }
+
+  map.on('resize', resizeAircraftCanvas);
+  map.on('moveend', () => {
+    if (!selectedTrajectory || !state.selectedIcao) return;
+    const f = state.flights.get(state.selectedIcao);
+    if (f && f.n && trajectoryWorldShift(f) !== trajWorldK) drawFlightTrajectory(f);
+  });
+  map.on('zoomstart', () => { zooming = true; zoomStartedAt = performance.now(); invalidateRadar(); });
+  map.on('zoomend', () => { zooming = false; invalidateRadar(); });
+
+  map.on('click', (e) => {
+    const p = e.containerPoint;
+    let best = null;
+    let bd = 22 * 22;
+    for (let i = 0; i < acHitsLen; i++) {
+      const h = acHits[i];
+      const dx = h.x - p.x;
+      const dy = h.y - p.y;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = h; }
+    }
+    if (best) selectAircraft(best.icao);
+    else if (state.selectedIcao) deselectAircraft();
+  });
+
+  const slider = document.getElementById('time-slider');
+  slider.addEventListener('pointerdown', () => { sliderDragging = true; });
+  window.addEventListener('pointerup', () => { sliderDragging = false; });
+  slider.addEventListener('input', (e) => {
+    if (!isFinite(state.globalMinTime) || !isFinite(state.globalMaxTime)) return;
+    const ratio = parseFloat(e.target.value) / 1000;
+    state.currentTime = state.globalMinTime
+      + (state.globalMaxTime - state.globalMinTime) * ratio;
+    drawModelFlightTimeline();
+    invalidateRadar();
+  });
+}
+
+
+
+function updateRadar(now) {
+  if (!map || !acCtx) return;
+  const size = map.getSize();
+  const c = map.getCenter();
+  const z = map.getZoom();
+  const sig = `${Math.round(state.currentTime * 20)}|${c.lat.toFixed(5)}|${c.lng.toFixed(5)}|${z}|${size.x}x${size.y}|${state.selectedIcao}|${state.labelShow}|${state.labelType}|${state.flights.size}|${zooming}`;
+  if (state.isPlaying) {
+    if (now - radarLastDraw < 33) return;   // 再生中は最大約30fps
+  } else if (sig === radarSig) {
+    return;                                  // 停止中は変化が無ければ描かない
+  }
+  radarLastDraw = now;
+  radarSig = sig;
+  drawAircraftLayer(size, z);
+}
+
+function drawAircraftLayer(size, z) {
+  const W = size.x, H = size.y;
+  const ctx = acCtx;
+  const dpr = acDpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  acHitsLen = 0;
+
+  const time = state.currentTime;
+  const selIcao = state.selectedIcao;
+
+  // 選択中の機体カードは画面外でも更新する
+  if (selIcao) {
+    const sf = state.flights.get(selIcao);
+    if (sf) updateSelectedCardUI(sf, getInterpolatedState(sf, time, selTmp));
+  }
+  // ズーム終了イベントが来なかった場合の保険
+  if (zooming && performance.now() - zoomStartedAt > 1500) zooming = false;
+  if (zooming) return;
+
+  const tlp = map.project(map.containerPointToLatLng([0, 0]), z);
+  const scale = 256 * Math.pow(2, z);
+  const ox = tlp.x, oy = tlp.y;
+  const margin = 40;
+  let selHit = null;
+
+  // 機体アイコンは毎回パスから直接描く（Canvasの作り置きは、GPUメモリ逼迫時に中身が消えることがあるため使わない）
+  ctx.lineWidth = 0.9;
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  const drawPlane = (px, py, hdgDeg, selected) => {
+    const a = (isFinite(hdgDeg) ? hdgDeg : 0) * Math.PI / 180;
+    const k = selected ? 1.25 : 1;
+    const c = Math.cos(a) * k * dpr;
+    const s = Math.sin(a) * k * dpr;
+    ctx.setTransform(c, s, -s, c, px * dpr, py * dpr);
+    ctx.translate(-12, -12);
+    ctx.fillStyle = selected ? '#ef4444' : '#f59e0b';
+    ctx.fill(PLANE_PATH);
+    ctx.stroke(PLANE_PATH);
+  };
+
+  // 地図は左右に無限スクロールでき、東京などは 360°ごとの「別の世界」にも現れる。
+  // 画面に入る世界コピーすべてに描くため、X座標を世界1周分(worldW)で折り返す
+  const worldW = scale;
+  const selHits = [];
+  let uniqueCount = 0;
+
+  state.flights.forEach((f, icao) => {
+    const it = getInterpolatedState(f, time, radarTmp);
+    if (!it) return;
+    const lat = it.lat > 85.0511 ? 85.0511 : (it.lat < -85.0511 ? -85.0511 : it.lat);
+    const sinL = Math.sin(lat * Math.PI / 180);
+    const rawX = (it.lon + 180) / 360 * worldW - ox;
+    const py = (0.5 - Math.log((1 + sinL) / (1 - sinL)) / (4 * Math.PI)) * worldW - oy;
+    if (!(py >= -margin && py <= H + margin) || !isFinite(rawX)) return; // NaNもここで弾く
+
+    let px = rawX - worldW * Math.floor((rawX + margin) / worldW);
+    let first = true;
+    for (; px <= W + margin; px += worldW) {
+      let h = acHits[acHitsLen];
+      if (!h) { h = { icao: '', x: 0, y: 0, flight: null, hdg: 0 }; acHits[acHitsLen] = h; }
+      acHitsLen++;
+      h.icao = icao; h.x = px; h.y = py; h.flight = f; h.hdg = it.hdg;
+      if (first) { uniqueCount++; first = false; }
+
+      if (icao === selIcao) selHits.push({ x: px, y: py, hdg: it.hdg, ref: h });
+      else drawPlane(px, py, it.hdg, false);
+    }
+  });
+
+  for (const sh of selHits) drawPlane(sh.x, sh.y, sh.hdg, true);
+  selHit = selHits.length ? selHits[0].ref : null;
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // ラベル（機数が多い時は選択機のみ。重くなるため）
+  if (state.labelShow) {
+    ctx.font = '10px monospace';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    const drawLabel = (h) => {
+      const txt = getLabelText(h.flight);
+      if (!txt) return;
+      const w = txt.length * 6 + 10;
+      const x = h.x - w / 2;
+      const y = h.y + 14;
+      ctx.fillStyle = 'rgba(15,23,42,0.88)';
+      ctx.fillRect(x, y, w, 14);
+      ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 13);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(txt, h.x, y + 7.5);
+    };
+    if (acHitsLen <= LABEL_MAX) {
+      for (let i = 0; i < acHitsLen; i++) drawLabel(acHits[i]);
+    } else if (selHit) {
+      drawLabel(selHit);
+    }
+  }
+
+  if (radarLastCount !== uniqueCount) {
+    radarLastCount = uniqueCount;
+    document.getElementById('active-count-label').textContent = `表示中: ${uniqueCount} 機`;
+  }
+}
+
+function togglePlay() {
+  state.isPlaying = !state.isPlaying;
+  document.getElementById('btn-play-pause').textContent = state.isPlaying ? '⏸ 一時停止' : '▶ 再生';
+}
+
+function setSpeed(spd) {
+  state.playbackSpeed = spd;
+  document.querySelectorAll('.speed-btns button').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.speed) === spd);
+  });
+}
+
+function formatJST(unixSec) {
+  if (!isFinite(unixSec)) return '--:--:-- JST';
+  const d = new Date(unixSec * 1000);
+  if (isNaN(d.getTime())) return '--:--:-- JST';
+  const jst = new Date(d.getTime() + 9 * 3600 * 1000);
+  const hh = String(jst.getUTCHours()).padStart(2, '0');
+  const mm = String(jst.getUTCMinutes()).padStart(2, '0');
+  const ss = String(jst.getUTCSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss} JST`;
+}
+
+function getLabelText(flight) {
+  if (!state.labelShow) return '';
+  if (state.labelType === 'reg') return flight.reg;
+  if (state.labelType === 'type') return flight.type;
+  return `${flight.reg} (${flight.type})`;
+}
+
+
+
+
+
+function selectAircraft(icao) {
+  const flight = state.flights.get(icao);
+  if (!flight) return;
+  state.selectedIcao = icao;
+
+  document.getElementById('card-reg').textContent = flight.reg;
+  document.getElementById('card-type').textContent = flight.type;
+  document.getElementById('card-desc').textContent = flight.desc;
+
+  document.getElementById('aircraft-card').classList.add('visible');
+  document.getElementById('timeline-bar').classList.add('shifted');
+  drawFlightTrajectory(flight);
+  timelineDirty = true;
+  drawModelFlightTimeline();
+  invalidateRadar();
+}
+
+function deselectAircraft() {
+  state.selectedIcao = null;
+  document.getElementById('aircraft-card').classList.remove('visible');
+  document.getElementById('timeline-bar').classList.remove('shifted');
+  if (selectedTrajectory) {
+    map.removeLayer(selectedTrajectory);
+    selectedTrajectory = null;
+  }
+  timelineDirty = true;
+  drawModelFlightTimeline();
+  invalidateRadar();
+}
+
+let trajWorldK = 0;
+function trajectoryWorldShift(flight) {
+  const ref = flight.lon[flight.n >> 1] / 1e6;
+  return Math.round((map.getCenter().lng - ref) / 360);
+}
+
+function drawFlightTrajectory(flight) {
+  if (selectedTrajectory) map.removeLayer(selectedTrajectory);
+  trajWorldK = trajectoryWorldShift(flight);
+  const lonShift = 360 * trajWorldK;
+  const segments = [];
+  let currentSeg = [];
+  const n = flight.n;
+  const stride = Math.max(1, Math.floor(n / 4000)); // 点が多すぎる軌跡は間引いて描く
+
+  for (let i = 0; i < n; i++) {
+    if (i > 0) {
+      const dt = flight.t[i] - flight.t[i - 1];
+      if ((flight.fl[i] & 2) || dt > GAP_SEC) {
+        if (currentSeg.length > 1) segments.push(currentSeg);
+        currentSeg = [];
+      }
+    }
+    if (i % stride === 0 || i === n - 1) currentSeg.push([flight.lat[i] / 1e6, flight.lon[i] / 1e6 + lonShift]);
+  }
+  if (currentSeg.length > 1) segments.push(currentSeg);
+
+  selectedTrajectory = L.polyline(segments, {
+    color: '#38bdf8',
+    weight: 2.5,
+    opacity: 0.75,
+    dashArray: '4, 4',
+    smoothFactor: 2,
+    interactive: false
+  }).addTo(map);
+}
+
+function updateSelectedCardUI(flight, interp) {
+  if (!interp) return;
+  const altStr = interp.isGround ? 'GND (地上)' : `${Math.round(interp.altFt).toLocaleString()} ft`;
+  document.getElementById('card-alt').textContent = altStr;
+  document.getElementById('card-spd').textContent = `${Math.round(interp.spd)} kt`;
+  const vSign = interp.vrate > 0 ? '+' : '';
+  document.getElementById('card-vrate').textContent = `${vSign}${Math.round(interp.vrate)} fpm`;
+  const cs = interp.callsign || '---';
+  document.getElementById('card-hdg').textContent = `${cs} / ${Math.round(interp.hdg)}°`;
+}
+
+/**
+ * 3D表示画面
+ */
+let scene3d, camera3d, renderer3d, controls3d;
+let mainPlaneGroup = null;
+let nearbyPlanesGroup = null;
+let groundTilesGroup = null;
+const loadedTileKeys = new Set();
+let tileSession = 0;
+const nearbyCache = new Map();
+let originLat = 0, originLon = 0;
+
+function latLonToMeters(lat, lon, refLat, refLon) {
+  const R = 6378137;
+  const dLat = (lat - refLat) * Math.PI / 180;
+  const dLon = (lon - refLon) * Math.PI / 180;
+  const x = dLon * R * Math.cos(refLat * Math.PI / 180);
+  const z = -dLat * R;
+  return { x, z };
+}
+
+const mainInterp = {};
+const nearbyTmp = {};
+
+async function enter3DView() {
+  if (!state.selectedIcao || state.entering3D) return;
+  const flight = state.flights.get(state.selectedIcao);
+  if (!flight || !flight.n) return;
+  const interp = getInterpolatedState(flight, state.currentTime, {}) || getInterpolatedState(flight, flight.t[0], {});
+  if (!interp) return;
+
+  state.entering3D = true;
+  try {
+    state.is3DMode = true;
+    state.sceneReady = false;
+    document.getElementById('view3d-screen').classList.add('active');
+
+    const modelData = state.models.get(flight.type);
+    const noModelOverlay = document.getElementById('no-model-overlay');
+
+    if (!modelData) {
+      document.getElementById('no-model-msg').textContent =
+        `機種コード「${flight.type}」に対応する3Dデータ（${flight.type}.glb）が読み込まれていません。`;
+      noModelOverlay.classList.add('visible');
+      return;
+    }
+    noModelOverlay.classList.remove('visible');
+
+    showToast('3Dモデルを読み込み中...');
+    const ok = await ensureModelLoaded(flight.type);
+    showToast('', false);
+    if (!state.is3DMode) return; // 読み込み中に終了された
+
+    if (!ok) {
+      document.getElementById('no-model-msg').textContent =
+        `「${flight.type}.glb」を読み込めませんでした（ファイル破損、またはメモリ不足の可能性があります）。`;
+      noModelOverlay.classList.add('visible');
+      return;
+    }
+
+    init3DScene();
+
+    originLat = interp.lat;
+    originLon = interp.lon;
+    tileSession++;
+    loadedTileKeys.clear();
+    nearbyCache.clear();
+    while (groundTilesGroup.children.length > 0) {
+      const old = groundTilesGroup.children[0];
+      groundTilesGroup.remove(old);
+      if (old.geometry) old.geometry.dispose();
+      if (old.material) {
+        if (old.material.map) old.material.map.dispose();
+        old.material.dispose();
+      }
+    }
+    while (nearbyPlanesGroup.children.length > 0) {
+      nearbyPlanesGroup.remove(nearbyPlanesGroup.children[0]);
+    }
+    while (mainPlaneGroup.children.length > 0) {
+      mainPlaneGroup.remove(mainPlaneGroup.children[0]);
+    }
+    mainModelContainer = cloneConfiguredModel(modelData);
+    mainPlaneGroup.add(mainModelContainer);
+    mainPlaneGroup.visible = true;
+    hideNearLabels();
+    document.getElementById('nearby-labels').style.display = state.nearLabels ? 'block' : 'none';
+
+    const sizeM = mainModelContainer.userData.size || DEFAULT_MODEL_SIZE_M;
+    const altM = Math.max(0, (interp.altG - (flight.baroOff || 0)) * 0.3048) + (mainModelContainer.userData.lift || 0);
+    controls3d.minDistance = Math.max(15, sizeM * 0.35);
+    camera3d.position.set(0, altM + sizeM * 0.7, sizeM * 2);
+    controls3d.target.set(0, altM, 0);
+    controls3d.update();
+
+    state.sceneReady = true;
+    if (state.soundEnabled) startEngineAudio();
+  } finally {
+    state.entering3D = false;
+  }
+}
+
+function exit3DView() {
+  state.is3DMode = false;
+  state.sceneReady = false;
+  showToast('', false);
+  document.getElementById('view3d-screen').classList.remove('active');
+  document.getElementById('no-model-overlay').classList.remove('visible');
+  stopEngineAudio();
+  hideNearLabels();
+  timelineDirty = true;
+  invalidateRadar();
+}
+
+function cloneConfiguredModel(modelData) {
+  // container: 機体姿勢（ピッチ・ロール）用 → flip: 全モデル一括の向き補正 → mesh: モデルごとの回転/拡大
+  const container = new THREE.Group();
+  container.userData.pitch = 0;
+  container.userData.roll = 0;
+  if (!modelData || !modelData.scene) return container;
+  const flip = new THREE.Group();
+  flip.rotation.y = THREE.MathUtils.degToRad(state.modelYaw);
+  const sizeM = (modelData.scene.userData.realSize || DEFAULT_MODEL_SIZE_M) * modelData.scale;
+  let mesh;
+  const vars = modelData.variants;
+  if (vars && vars.length > 1) {
+    // 遠くの機体ほど簡略モデルを表示（THREE.LODがカメラ距離で自動切り替え）
+    mesh = new THREE.LOD();
+    vars.forEach((v, i) => mesh.addLevel(v.clone(), i === 0 ? 0 : sizeM * LOD_DIST_K[i - 1]));
+  } else {
+    mesh = modelData.scene.clone();
+  }
+  mesh.rotation.set(
+    THREE.MathUtils.degToRad(modelData.rotX),
+    THREE.MathUtils.degToRad(modelData.rotY),
+    THREE.MathUtils.degToRad(modelData.rotZ)
+  );
+  mesh.scale.setScalar(modelData.scale);
+  flip.add(mesh);
+  container.add(flip);
+
+  // 機体の最下点が高さ0(地面)になるよう、モデル中心から底面までの距離を求める（設定が同じ間はキャッシュ）
+  const key = `${modelData.rotX},${modelData.rotY},${modelData.rotZ},${modelData.scale},${state.modelYaw}`;
+  if (modelData._liftKey !== key) {
+    container.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(container);
+    modelData._lift = isFinite(bb.min.y) ? Math.max(0, -bb.min.y) : 0;
+    modelData._liftKey = key;
+  }
+  container.userData.lift = modelData._lift || 0;
+  container.userData.size = sizeM;
+  return container;
+}
+
+const PITCH_GAIN = 1.0;   // 昇降の傾きの強調倍率（1.0 = 実際の飛行経路角そのまま）
+const PITCH_MAX = 20;     // ピッチ上限(度)
+const ROLL_MAX = 35;      // バンク上限(度)
+let mainModelContainer = null;
+
+// 昇降率でピッチ、旋回率でバンク（協調旋回: tanφ = ω·V/g）を付け、なめらかに追従させる
+function applyAttitude(container, it, dt) {
+  let tp = 0, tr = 0;
+  if (!it.isGround && it.spd > 40) {
+    const v = it.spd * 0.5144;
+    const vs = isFinite(it.vs) ? it.vs : 0;
+    const hr = isFinite(it.hrate) ? it.hrate : 0;
+    tp = Math.atan2(vs * 0.00508, v) * 180 / Math.PI * PITCH_GAIN;
+    tp = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, tp));
+    tr = Math.atan(hr * Math.PI / 180 * v / 9.81) * 180 / Math.PI;
+    tr = Math.max(-ROLL_MAX, Math.min(ROLL_MAX, tr));
+  }
+  const ud = container.userData;
+  // 生成直後の最初の1回は、0からの追従(=ぐらっと動く挙動)を避けるため目標姿勢へ即座に合わせる
+  const a = ud.attInit ? 1 - Math.exp(-Math.max(dt, 0.001) / 0.6) : 1;
+  ud.attInit = true;
+  ud.pitch += (tp - ud.pitch) * a;
+  ud.roll += (tr - ud.roll) * a;
+  // 機首は -Z、右翼は +X。右旋回(roll>0)は右翼が下がるので Z回転は負
+  container.rotation.set(THREE.MathUtils.degToRad(ud.pitch), 0, THREE.MathUtils.degToRad(-ud.roll));
+}
+
+function updateYawLabel() {
+  const el = document.getElementById('set-yaw-val');
+  if (el) el.textContent = `${state.modelYaw}°`;
+}
+
+function rebuild3DModels() {
+  nearbyCache.clear();
+  if (nearbyPlanesGroup) {
+    while (nearbyPlanesGroup.children.length > 0) nearbyPlanesGroup.remove(nearbyPlanesGroup.children[0]);
+  }
+  if (state.sceneReady && state.selectedIcao && mainPlaneGroup) {
+    const f = state.flights.get(state.selectedIcao);
+    const md = f && state.models.get(f.type);
+    while (mainPlaneGroup.children.length > 0) mainPlaneGroup.remove(mainPlaneGroup.children[0]);
+    mainModelContainer = cloneConfiguredModel(md);
+    mainPlaneGroup.add(mainModelContainer);
+  }
+  selectPreviewModel();
+}
+
+function rotateAllModels(deg) {
+  state.modelYaw = (state.modelYaw + deg) % 360;
+  saveSetting('fr_modelYaw', state.modelYaw);
+  updateYawLabel();
+  rebuild3DModels();
+}
+
+function resetAllModelYaw() {
+  state.modelYaw = 0;
+  saveSetting('fr_modelYaw', 0);
+  updateYawLabel();
+  rebuild3DModels();
+}
+
+// ---- 周辺機ラベル（機体の上に表示し、矢印で「見ている機体」の方向を指す） ----
+const nearLabelEls = new Map();
+const nearCands = [];
+const _lv = new THREE.Vector3();
+const NEAR_LABEL_LIFT = 30;   // 機体の上に浮かせる高さ(m)
+const NEAR_LABEL_MAX = 40;    // 同時に出すラベル数の上限
+
+function setNearLabels(on) {
+  state.nearLabels = !!on;
+  saveSetting('fr_nearLabels', state.nearLabels ? '1' : '0');
+  const btn = document.getElementById('btn-near-label');
+  if (btn) btn.textContent = state.nearLabels ? '🏷 周辺ラベル: ON' : '🏷 周辺ラベル: OFF';
+  const cb = document.getElementById('set-near-labels');
+  if (cb) cb.checked = state.nearLabels;
+  if (!state.nearLabels) hideNearLabels();
+}
+function toggleNearLabels() { setNearLabels(!state.nearLabels); }
+
+function hideNearLabels() {
+  nearLabelEls.forEach((el) => { el.style.display = 'none'; });
+}
+
+function formatNearDist(m) {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+function renderNearLabels() {
+  const root = document.getElementById('nearby-labels');
+  const dom = renderer3d.domElement;
+  const W = dom.clientWidth, H = dom.clientHeight;
+  if (!W || !H) return;
+
+  camera3d.updateMatrixWorld();
+  _lv.copy(mainPlaneGroup.position).project(camera3d);
+  const mainVisible = _lv.z < 1;
+  const mx = (_lv.x * 0.5 + 0.5) * W;
+  const my = (-_lv.y * 0.5 + 0.5) * H;
+
+  nearCands.sort((a, b) => a.dist - b.dist);
+  const used = new Set();
+  const lim = Math.min(nearCands.length, NEAR_LABEL_MAX);
+  for (let i = 0; i < lim; i++) {
+    const c = nearCands[i];
+    _lv.set(c.x, c.y + NEAR_LABEL_LIFT, c.z).project(camera3d);
+    if (_lv.z > 1) continue;   // カメラの後ろ
+    const sx = (_lv.x * 0.5 + 0.5) * W;
+    const sy = (-_lv.y * 0.5 + 0.5) * H;
+    if (sx < -100 || sx > W + 100 || sy < -50 || sy > H + 60) continue;
+
+    let el = nearLabelEls.get(c.icao);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'near-label';
+      el.innerHTML = '<div class="nl-main"></div><div class="nl-sub"><span class="near-arrow">➤</span><span class="nl-info"></span></div>';
+      el._main = el.firstChild;
+      el._arrow = el.querySelector('.near-arrow');
+      el._info = el.querySelector('.nl-info');
+      el._t1 = ''; el._t2 = '';
+      root.appendChild(el);
+      nearLabelEls.set(c.icao, el);
+    }
+    const t1 = `${c.flight.reg} ${c.flight.type}`;
+    const dAlt = Math.round(c.dAlt);
+    const t2 = `${formatNearDist(c.d3)} ${dAlt >= 0 ? '+' : ''}${dAlt}m`;
+    if (el._t1 !== t1) { el._main.textContent = t1; el._t1 = t1; }
+    if (el._t2 !== t2) { el._info.textContent = t2; el._t2 = t2; }
+    // 矢印: 画面上で「このラベルの機体 → 見ている機体」の向き
+    const ang = mainVisible ? Math.atan2(my - sy, mx - sx) * 180 / Math.PI : 0;
+    el._arrow.style.transform = `rotate(${ang.toFixed(0)}deg)`;
+    el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, -100%)`;
+    el.style.display = 'block';
+    used.add(c.icao);
+  }
+  nearLabelEls.forEach((el, icao) => {
+    if (!used.has(icao)) el.style.display = 'none';
+  });
+}
+
+function init3DScene() {
+  if (renderer3d) return;
+  const container = document.getElementById('canvas3d-container');
+
+  scene3d = new THREE.Scene();
+  scene3d.background = new THREE.Color(0x071324);
+  scene3d.fog = new THREE.FogExp2(0x071324, 0.000018);
+
+  camera3d = new THREE.PerspectiveCamera(55, container.clientWidth / container.clientHeight, 1, 120000);
+  renderer3d = new THREE.WebGLRenderer({ antialias: true });
+  renderer3d.setSize(container.clientWidth, container.clientHeight);
+  renderer3d.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  container.appendChild(renderer3d.domElement);
+
+  controls3d = new THREE.OrbitControls(camera3d, renderer3d.domElement);
+  controls3d.enableDamping = true;
+  controls3d.dampingFactor = 0.08;
+  controls3d.enablePan = false;   // 注視点は常に機体に追従させるため、パンは無効
+  controls3d.minDistance = 15;
+  controls3d.maxDistance = 3000;
+  controls3d.maxPolarAngle = Math.PI * 0.495;
+
+  scene3d.environment = makeEnvTexture(renderer3d);
+  const ambient = new THREE.AmbientLight(0xffffff, scene3d.environment ? 0.55 : 0.85);
+  scene3d.add(ambient);
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+  dirLight.position.set(500, 2000, 800);
+  scene3d.add(dirLight);
+
+  groundTilesGroup = new THREE.Group();
+  scene3d.add(groundTilesGroup);
+
+  mainPlaneGroup = new THREE.Group();
+  scene3d.add(mainPlaneGroup);
+
+  nearbyPlanesGroup = new THREE.Group();
+  scene3d.add(nearbyPlanesGroup);
+
+  window.addEventListener('resize', () => {
+    if (!renderer3d) return;
+    if (!container.clientWidth || !container.clientHeight) return;
+    camera3d.aspect = container.clientWidth / container.clientHeight;
+    camera3d.updateProjectionMatrix();
+    renderer3d.setSize(container.clientWidth, container.clientHeight);
+  });
+}
+
+function pruneGroundTiles(cx, cz) {
+  const MAXT = 120;
+  if (groundTilesGroup.children.length <= MAXT) return;
+  const arr = groundTilesGroup.children.slice().sort((a, b) =>
+    Math.hypot(b.position.x - cx, b.position.z - cz) - Math.hypot(a.position.x - cx, a.position.z - cz));
+  const removeN = groundTilesGroup.children.length - MAXT;
+  for (let i = 0; i < removeN; i++) {
+    const m = arr[i];
+    groundTilesGroup.remove(m);
+    if (m.userData.key) loadedTileKeys.delete(m.userData.key);
+    if (m.geometry) m.geometry.dispose();
+    if (m.material) {
+      if (m.material.map) m.material.map.dispose();
+      m.material.dispose();
+    }
+  }
+}
+
+function updateGroundMapTiles(centerLat, centerLon) {
+  const zoom = 12;
+  const n = Math.pow(2, zoom);
+  const cx = Math.floor((centerLon + 180) / 360 * n);
+  const latRad = centerLat * Math.PI / 180;
+  const cy = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+
+  const radius = 2;
+  const texLoader = new THREE.TextureLoader();
+  texLoader.setCrossOrigin('anonymous');
+  const urlFn = GROUND_URLS[state.groundMap] || GROUND_URLS.street;
+
+  for (let dx = -radius; dx <= radius; dx++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      const tx = cx + dx;
+      const ty = cy + dy;
+      const key = `${zoom}_${tx}_${ty}`;
+      if (loadedTileKeys.has(key)) continue;
+      loadedTileKeys.add(key);
+
+      const lonLeft = tx / n * 360 - 180;
+      const lonRight = (tx + 1) / n * 360 - 180;
+      const latTop = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI;
+      const latBottom = Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty + 1) / n))) * 180 / Math.PI;
+
+      const pTL = latLonToMeters(latTop, lonLeft, originLat, originLon);
+      const pBR = latLonToMeters(latBottom, lonRight, originLat, originLon);
+
+      const width = Math.abs(pBR.x - pTL.x);
+      const height = Math.abs(pBR.z - pTL.z);
+      const midX = (pTL.x + pBR.x) / 2;
+      const midZ = (pTL.z + pBR.z) / 2;
+
+      const url = urlFn(zoom, tx, ty);
+      const mySession = tileSession;
+      texLoader.load(url, (tex) => {
+        if (mySession !== tileSession) { tex.dispose(); return; }
+        const geo = new THREE.PlaneGeometry(width, height);
+        const mat = new THREE.MeshBasicMaterial({ map: tex });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(midX, 0, midZ);
+        mesh.userData.key = key;
+        groundTilesGroup.add(mesh);
+        pruneGroundTiles(midX, midZ);
+      }, undefined, () => {
+        // 失敗したタイルは少し待って再試行できるようにする
+        setTimeout(() => { if (mySession === tileSession) loadedTileKeys.delete(key); }, 15000);
+      });
+    }
+  }
+}
+
+function update3DScene() {
+  if (!state.is3DMode || !state.sceneReady || !renderer3d || !state.selectedIcao) return;
+  const flight = state.flights.get(state.selectedIcao);
+  if (!flight || !state.models.has(flight.type)) return;
+
+  const dt = state.frameDt;
+  const interp = getInterpolatedState(flight, state.currentTime, mainInterp);
+
+  if (interp) {
+    const pos = latLonToMeters(interp.lat, interp.lon, originLat, originLon);
+    const bOff = flight.baroOff || 0;
+    const lift = mainModelContainer ? (mainModelContainer.userData.lift || 0) : 0;
+    const altM = Math.max(0, (interp.altG - bOff) * 0.3048) + lift;   // 地面=0m、機体の最下点が地面に乗る高さ
+
+    const offset = camera3d.position.clone().sub(controls3d.target);
+    mainPlaneGroup.visible = true;
+    mainPlaneGroup.position.set(pos.x, altM, pos.z);
+    mainPlaneGroup.rotation.y = -THREE.MathUtils.degToRad(interp.hdg);
+    if (mainModelContainer) applyAttitude(mainModelContainer, interp, dt);
+
+    controls3d.target.set(pos.x, altM, pos.z);
+    camera3d.position.copy(controls3d.target).add(offset);
+
+    updateGroundMapTiles(interp.lat, interp.lon);
+
+    // 周辺機: icaoごとにクローンを使い回す（毎フレーム作り直さない）
+    let nearbyCount = 0;
+    nearCands.length = 0;
+    const seen = new Set();
+    state.flights.forEach((otherFlight, otherIcao) => {
+      if (otherIcao === state.selectedIcao) return;
+      const otherModel = state.models.get(otherFlight.type);
+      if (!otherModel) return;
+
+      const oi = getInterpolatedState(otherFlight, state.currentTime, nearbyTmp);
+      if (!oi) return;
+
+      const oPos = latLonToMeters(oi.lat, oi.lon, originLat, originLon);
+      const dist = Math.hypot(oPos.x - pos.x, oPos.z - pos.z);
+      if (dist > 50000) return;
+
+      if (!otherModel.scene) {
+        // 近くに来た機種のモデルだけ、その時に読み込む
+        if (!otherModel.loading && !otherModel.failed) ensureModelLoaded(otherFlight.type);
+        return;
+      }
+      otherModel.lastUsed = performance.now();
+
+      nearbyCount++;
+      seen.add(otherIcao);
+      let clone = nearbyCache.get(otherIcao);
+      if (!clone) {
+        clone = cloneConfiguredModel(otherModel);
+        clone.userData.modelType = otherFlight.type;
+        nearbyCache.set(otherIcao, clone);
+        nearbyPlanesGroup.add(clone);
+      }
+      const oAlt = Math.max(0, (oi.altG - (otherFlight.baroOff || 0)) * 0.3048) + (clone.userData.lift || 0);
+      clone.position.set(oPos.x, oAlt, oPos.z);
+      clone.rotation.y = -THREE.MathUtils.degToRad(oi.hdg);
+      applyAttitude(clone, oi, dt);
+
+      if (state.nearLabels) {
+        nearCands.push({
+          icao: otherIcao, flight: otherFlight,
+          x: oPos.x, y: oAlt, z: oPos.z,
+          dist, dAlt: oAlt - altM, d3: Math.hypot(dist, oAlt - altM)
+        });
+      }
+    });
+    nearbyCache.forEach((clone, icao) => {
+      if (!seen.has(icao)) {
+        nearbyPlanesGroup.remove(clone);
+        nearbyCache.delete(icao);
+      }
+    });
+
+    document.getElementById('hud-reg').textContent = flight.reg;
+    document.getElementById('hud-type').textContent = flight.type;
+    document.getElementById('hud-desc').textContent = flight.desc;
+    document.getElementById('hud-alt').textContent = interp.isGround
+      ? '地上 (0 m)'
+      : `${Math.round(interp.altFt).toLocaleString()} ft (${Math.round(altM).toLocaleString()} m)`;
+    document.getElementById('hud-spd').textContent = `${Math.round(interp.spd)} kt (${Math.round(interp.spd * 1.852)} km/h)`;
+    const vsv = Math.round(isFinite(interp.vs) ? interp.vs : 0);
+    document.getElementById('hud-vs').textContent = `${vsv > 0 ? '+' : ''}${vsv.toLocaleString()} fpm`;
+    document.getElementById('hud-hdg').textContent = `${Math.round(interp.hdg)}°`;
+    document.getElementById('hud-nearby').textContent = `${nearbyCount} 機`;
+
+    updateEngineAudio(interp);
+  } else {
+    // この機体のデータが無い時間帯: 機体は隠すが、画面は止めずに描画し続ける
+    mainPlaneGroup.visible = false;
+  }
+
+  controls3d.update();
+  if (interp && state.nearLabels) renderNearLabels();
+  else hideNearLabels();
+  renderer3d.render(scene3d, camera3d);
+}
+
+function toggleHudInfo() {
+  document.getElementById('hud-info-panel').classList.toggle('collapsed');
+}
+
+/**
+ * Web Audio API エンジン音
+ */
+let audioCtx = null;
+let engine = null;
+let noiseBuf = null;
+
+function updateSoundButton() {
+  const btn = document.getElementById('btn-sound-toggle');
+  if (btn) btn.textContent = state.soundEnabled ? '🔊 音: ON' : '🔇 音: OFF';
+}
+
+const VOL_BOOST = 1.6;   // スマホのスピーカーでも聞こえるよう、全体の音量を底上げ
+let silentAudioEl = null;
+let audioHintShown = false;
+
+// iOSはマナーモード(消音スイッチ)だとWeb Audioが無音になる。無音の<audio>を再生して「再生」扱いにすると鳴る
+function primeSilentAudio() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  if (silentAudioEl) { silentAudioEl.play().catch(() => {}); return; }
+  try {
+    const sr = 8000, n = sr;   // 1秒の無音WAV
+    const buf = new ArrayBuffer(44 + n * 2);
+    const dv = new DataView(buf);
+    const wr = (o, t) => { for (let i = 0; i < t.length; i++) dv.setUint8(o + i, t.charCodeAt(i)); };
+    wr(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); wr(8, 'WAVE'); wr(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+    dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    wr(36, 'data'); dv.setUint32(40, n * 2, true);
+    silentAudioEl = document.createElement('audio');
+    silentAudioEl.setAttribute('playsinline', '');
+    silentAudioEl.loop = true;
+    silentAudioEl.src = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    silentAudioEl.play().catch(() => {});
+  } catch (e) {}
+}
+
+function ensureAudioCtx() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!audioCtx) audioCtx = new AC();
+  if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+  return audioCtx;
+}
+
+// ブラウザの自動再生制限への対策: ユーザー操作(タップ/クリック)の中でAudioContextを作成・再開する。
+// 3D画面に入る時のように非同期処理の後で作ると、操作と見なされず無音のままになるため、常に先に準備しておく
+function unlockAudioOnGesture() {
+  const ctx = ensureAudioCtx();
+  primeSilentAudio();
+  if (ctx) {
+    try {
+      const b = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = b; src.connect(ctx.destination); src.start(0);
+    } catch (e) {}
+    if (ctx.state === 'running' && audioHintShown) { audioHintShown = false; showToast('', false); }
+  }
+}
+['pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'keydown', 'click'].forEach((ev) => {
+  window.addEventListener(ev, unlockAudioOnGesture, { passive: true, capture: true });
+});
+document.addEventListener('visibilitychange', () => {
+  if (!audioCtx) return;
+  if (document.hidden) audioCtx.suspend().catch(() => {});
+  else audioCtx.resume().catch(() => {});
+});
+
+function setSoundEnabled(on) {
+  state.soundEnabled = on;
+  saveSetting('fr_sound', on ? '1' : '0');
+  updateSoundButton();
+  if (on) {
+    unlockAudioOnGesture();
+    if (state.is3DMode && state.sceneReady) startEngineAudio();
+  } else {
+    stopEngineAudio();
+  }
+}
+
+function toggleEngineSound() {
+  setSoundEnabled(!state.soundEnabled);
+}
+
+function onVolumeChange(v) {
+  state.volume = Math.max(0, Math.min(1, parseFloat(v) / 100));
+  saveSetting('fr_volume', state.volume);
+  document.getElementById('set-volume-val').textContent = `${Math.round(state.volume * 100)}%`;
+  if (engine && audioCtx) engine.master.gain.setTargetAtTime(state.volume * VOL_BOOST, audioCtx.currentTime, 0.05);
+}
+
+// 全機種共通のジェットエンジン音（風切り音＋低音の唸り＋タービンの高音）。速度に応じて変化する
+function startEngineAudio() {
+  stopEngineAudio();
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+
+  if (!noiseBuf || noiseBuf.sampleRate !== ctx.sampleRate) {
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuf;
+  noise.loop = true;
+
+  const roarBP = ctx.createBiquadFilter();
+  roarBP.type = 'bandpass'; roarBP.frequency.value = 700; roarBP.Q.value = 0.6;
+  const roarGain = ctx.createGain(); roarGain.gain.value = 0;
+
+  const rumbleLP = ctx.createBiquadFilter();
+  rumbleLP.type = 'lowpass'; rumbleLP.frequency.value = 160;
+  const rumbleGain = ctx.createGain(); rumbleGain.gain.value = 0;
+
+  const o1 = ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 420;
+  const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = 210;
+  const whineLP = ctx.createBiquadFilter();
+  whineLP.type = 'lowpass'; whineLP.frequency.value = 1400;
+  const whineGain = ctx.createGain(); whineGain.gain.value = 0;
+
+  const master = ctx.createGain(); master.gain.value = 0;
+  const comp = ctx.createDynamicsCompressor();
+
+  noise.connect(roarBP); roarBP.connect(roarGain); roarGain.connect(master);
+  noise.connect(rumbleLP); rumbleLP.connect(rumbleGain); rumbleGain.connect(master);
+  o1.connect(whineLP); o2.connect(whineLP); whineLP.connect(whineGain); whineGain.connect(master);
+  master.connect(comp); comp.connect(ctx.destination);
+
+  noise.start(); o1.start(); o2.start();
+  master.gain.setTargetAtTime(state.volume * VOL_BOOST, ctx.currentTime, 0.2);
+
+  engine = {
+    noise, o1, o2, roarBP, roarGain, rumbleGain, whineGain, master, lastUpd: 0,
+    nodes: [noise, roarBP, roarGain, rumbleLP, rumbleGain, o1, o2, whineLP, whineGain, master, comp]
+  };
+}
+
+// 速度・上昇に応じてエンジン音を変化させる（0.1秒ごとに更新）
+function updateEngineAudio(it) {
+  if (!engine || !audioCtx) return;
+  // ブラウザに止められている場合は再開を試み、操作待ちならヒントを出す
+  if (audioCtx.state !== 'running') {
+    audioCtx.resume().catch(() => {});
+    if (!audioHintShown) { audioHintShown = true; showToast('🔊 画面を1回タップすると音が出ます'); }
+  } else if (audioHintShown) {
+    audioHintShown = false; showToast('', false);
+  }
+  const nowMs = performance.now();
+  if (nowMs - engine.lastUpd < 100) return;
+  engine.lastUpd = nowMs;
+
+  let th = Math.min(1, it.spd / 450);
+  if (it.isGround && it.spd < 5) th = 0.05;
+  const climb = isFinite(it.vs) ? Math.max(0, Math.min(0.3, it.vs / 3000)) : 0;
+  th = Math.max(0, Math.min(1, th + climb));
+
+  const t0 = audioCtx.currentTime;
+  engine.roarGain.gain.setTargetAtTime(0.25 + 1.25 * th, t0, 0.3);
+  engine.rumbleGain.gain.setTargetAtTime(1.5 + 2.5 * th, t0, 0.3);
+  engine.whineGain.gain.setTargetAtTime(0.02 + 0.10 * th, t0, 0.3);
+  engine.o1.frequency.setTargetAtTime(300 + 450 * th, t0, 0.3);
+  engine.o2.frequency.setTargetAtTime(150 + 225 * th, t0, 0.3);
+  engine.roarBP.frequency.setTargetAtTime(500 + 900 * th, t0, 0.3);
+}
+
+function stopEngineAudio() {
+  if (!engine) return;
+  const e = engine;
+  engine = null;
+  try {
+    e.master.gain.cancelScheduledValues(0);
+    e.master.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+  } catch (err) {}
+  setTimeout(() => {
+    [e.noise, e.o1, e.o2].forEach((n) => { try { n.stop(); } catch (err) {} });
+    e.nodes.forEach((n) => { try { n.disconnect(); } catch (err) {} });
+  }, 300);
+}
+
+/**
+ * 設定画面 & 3Dモデル調整プレビュー
+ */
+let prevScene, prevCamera, prevRenderer, prevControls, prevModelHolder;
+
+function openSettingsScreen() {
+  document.getElementById('settings-screen').classList.add('active');
+  updateSettingsModelList();
+  initPreview3D();
+  selectPreviewModel();
+}
+
+function closeSettingsScreen() {
+  document.getElementById('settings-screen').classList.remove('active');
+  timelineDirty = true;
+  drawModelFlightTimeline();
+  invalidateRadar();
+}
+
+function updateLabelSettings() {
+  state.labelShow = document.getElementById('set-label-show').checked;
+  state.labelType = document.getElementById('set-label-type').value;
+}
+
+function updateSettingsModelList() {
+  const sel = document.getElementById('set-model-select');
+  const current = sel.value;
+  sel.innerHTML = '';
+
+  if (state.models.size === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '3Dモデル未読み込み';
+    sel.appendChild(opt);
+    return;
+  }
+
+  state.models.forEach((_, typeCode) => {
+    const opt = document.createElement('option');
+    opt.value = typeCode;
+    const rs = getModelRealSize(typeCode);
+    opt.textContent = `${typeCode}.glb` + (rs.known ? ` (${rs.size}m)` : ' (実寸不明:仮35m)');
+    sel.appendChild(opt);
+  });
+
+  if (current && state.models.has(current)) sel.value = current;
+}
+
+function initPreview3D() {
+  if (prevRenderer) return;
+  const box = document.getElementById('preview3d-box');
+  prevScene = new THREE.Scene();
+  prevScene.background = new THREE.Color(0x020617);
+
+  prevCamera = new THREE.PerspectiveCamera(45, box.clientWidth / box.clientHeight, 0.1, 3000);
+  prevCamera.position.set(45, 35, 55);
+
+  prevRenderer = new THREE.WebGLRenderer({ antialias: true });
+  prevRenderer.setSize(box.clientWidth, box.clientHeight);
+  box.appendChild(prevRenderer.domElement);
+
+  prevControls = new THREE.OrbitControls(prevCamera, prevRenderer.domElement);
+  prevControls.enableDamping = true;
+
+  const grid = new THREE.GridHelper(80, 8, 0x38bdf8, 0x1e293b);
+  prevScene.add(grid);
+
+  const arrowDir = new THREE.Vector3(0, 0, -1);
+  const arrowHelper = new THREE.ArrowHelper(arrowDir, new THREE.Vector3(0, 0.5, 15), 35, 0xf59e0b, 6, 4);
+  prevScene.add(arrowHelper);
+
+  prevScene.environment = makeEnvTexture(prevRenderer);
+  const amb = new THREE.AmbientLight(0xffffff, prevScene.environment ? 0.6 : 1.0);
+  prevScene.add(amb);
+  const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+  dir.position.set(20, 50, 30);
+  prevScene.add(dir);
+
+  prevModelHolder = new THREE.Group();
+  prevScene.add(prevModelHolder);
+
+  window.addEventListener('resize', () => {
+    if (!prevRenderer || !box.clientWidth || !box.clientHeight) return;
+    prevCamera.aspect = box.clientWidth / box.clientHeight;
+    prevCamera.updateProjectionMatrix();
+    prevRenderer.setSize(box.clientWidth, box.clientHeight);
+  });
+
+  function animatePreview() {
+    requestAnimationFrame(animatePreview);
+    if (document.getElementById('settings-screen').classList.contains('active')) {
+      prevControls.update();
+      prevRenderer.render(prevScene, prevCamera);
+    }
+  }
+  animatePreview();
+}
+
+let previewToken = 0;
+let prevFramedType = null;
+async function selectPreviewModel() {
+  if (!prevModelHolder) return;
+  while (prevModelHolder.children.length > 0) {
+    prevModelHolder.remove(prevModelHolder.children[0]);
+  }
+  const typeCode = document.getElementById('set-model-select').value;
+  const data = state.models.get(typeCode);
+  if (!data) return;
+
+  document.getElementById('set-model-scale').value = data.scale;
+  document.getElementById('set-scale-val').textContent = `${data.scale.toFixed(1)}x`;
+
+  const token = ++previewToken;
+  if (!data.scene) showToast('3Dモデルを読み込み中...');
+  const ok = await ensureModelLoaded(typeCode);
+  showToast('', false);
+  if (!ok || token !== previewToken) return;
+  while (prevModelHolder.children.length > 0) {
+    prevModelHolder.remove(prevModelHolder.children[0]);
+  }
+  prevModelHolder.add(cloneConfiguredModel(data));
+  if (prevFramedType !== typeCode) {
+    prevFramedType = typeCode;
+    const sz = (data.scene && data.scene.userData.realSize) || DEFAULT_MODEL_SIZE_M;
+    prevCamera.position.setLength(Math.max(70, sz * 1.9));
+    prevControls.update();
+  }
+}
+
+function rotatePreviewModel(axis, deg) {
+  const typeCode = document.getElementById('set-model-select').value;
+  const data = state.models.get(typeCode);
+  if (!data) return;
+
+  if (axis === 'x') data.rotX = (data.rotX + deg) % 360;
+  if (axis === 'y') data.rotY = (data.rotY + deg) % 360;
+  if (axis === 'z') data.rotZ = (data.rotZ + deg) % 360;
+  selectPreviewModel();
+}
+
+function scalePreviewModel(val) {
+  const typeCode = document.getElementById('set-model-select').value;
+  const data = state.models.get(typeCode);
+  if (!data) return;
+
+  data.scale = parseFloat(val);
+  document.getElementById('set-scale-val').textContent = `${data.scale.toFixed(1)}x`;
+  selectPreviewModel();
+}
+
+function resetPreviewTransform() {
+  const typeCode = document.getElementById('set-model-select').value;
+  const data = state.models.get(typeCode);
+  if (!data) return;
+
+  data.rotX = 0;
+  data.rotY = 0;
+  data.rotZ = 0;
+  data.scale = 1.0;
+  selectPreviewModel();
+}
+
+/**
+ * メインループ
+ */
+const elRadar = document.getElementById('radar-screen');
+const elSettings = document.getElementById('settings-screen');
+const elTimeDisplay = document.getElementById('time-display');
+const elSlider = document.getElementById('time-slider');
+let lastTimeText = '';
+
+function mainLoop(now) {
+  requestAnimationFrame(mainLoop);
+
+  // 安全な dt 計算（タブ復帰時などの巨大な差分・不正値も抑制）
+  let dtSec = (now - state.lastFrameTime) / 1000;
+  if (!isFinite(dtSec) || dtSec < 0) dtSec = 0;
+  if (dtSec > 0.25) dtSec = 0.25;
+  state.frameDt = dtSec;
+  state.lastFrameTime = now;
+
+  const minT = state.globalMinTime;
+  const maxT = state.globalMaxTime;
+  const span = maxT - minT;
+  const hasData = state.flights.size > 0 && isFinite(minT) && isFinite(maxT);
+
+  if (hasData) {
+    // 不正な現在時刻を補正
+    if (!isFinite(state.currentTime)) state.currentTime = minT;
+
+    // スパンが存在する時のみ時間を進める（span=0 でリセット無限ループを防ぐ）
+    if (state.isPlaying && !sliderDragging && span > 0) {
+      state.currentTime += dtSec * state.playbackSpeed;
+      if (state.currentTime > maxT) {
+        state.currentTime = minT;
+      }
+    }
+
+    // 範囲外はクランプ（span=0 でも表示は維持）
+    if (state.currentTime < minT) state.currentTime = minT;
+    if (state.currentTime > maxT) state.currentTime = maxT;
+
+    const radarVisible = elRadar.classList.contains('active')
+      && !state.is3DMode
+      && !elSettings.classList.contains('active');
+
+    if (radarVisible || state.is3DMode) {
+      const tt = formatJST(state.currentTime);
+      if (tt !== lastTimeText) {
+        elTimeDisplay.textContent = tt;
+        lastTimeText = tt;
+      }
+    }
+    if (radarVisible && !sliderDragging) {
+      const ratio = span > 0 ? (state.currentTime - minT) / span : 0;
+      elSlider.value = Math.round(ratio * 1000);
+    }
+
+    if (radarVisible && map) {
+      drawModelFlightTimeline();
+      updateRadar(now);
+    }
+
+    if (state.is3DMode) {
+      update3DScene();
+    }
+  }
+}
+
+requestAnimationFrame(mainLoop);
+</script>
+</body>
+</html>
