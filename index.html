@@ -1025,14 +1025,6 @@
       </select>
     </div>
     <div class="setting-row">
-      <span>アニメーションの姿勢を反映<br><span style="font-size:10px; color:var(--text-muted);">脚・タイヤなどの位置や大きさがアニメーションで決まるモデルで、タイヤだけが巨大・別の向きで出る場合に有効です。変更するとモデルを再構築します</span></span>
-      <select id="set-anim-pose" onchange="onAnimPoseChange(this.value)">
-        <option value="start">最初の姿勢（0秒）</option>
-        <option value="end">最後の姿勢</option>
-        <option value="off">反映しない</option>
-      </select>
-    </div>
-    <div class="setting-row">
       <span>異常パーツの自動削除<br><span style="font-size:10px; color:var(--text-muted);">軽量化に失敗して、元の形から大きくはみ出したパーツ（別の場所に巨大に出るタイヤなど）を自動で消します。変更するとモデルを再構築します</span></span>
       <input type="checkbox" id="set-prune-abn" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="onPruneAbnChange(this.checked)">
     </div>
@@ -1157,7 +1149,6 @@ const state = {
   models: new Map(),
   globalMinTime: Infinity,
   globalMaxTime: -Infinity,
-  animPose: 'start',     // アニメーションの姿勢をモデルに反映: start(0秒) / end(最後) / off
   pruneAbnormal: true,   // 軽量化で壊れたパーツ（巨大なタイヤ等）を自動で消す
   prog: null,            // 段階読み込み中のサーバーフォルダ
   currentTime: 0,
@@ -1271,8 +1262,6 @@ function loadSavedSettings() {
     const q = localStorage.getItem('fr_quality');
     if (q && QUALITY_PRESETS[q]) state.quality = q;
     if (localStorage.getItem('fr_pruneAbn') === '0') state.pruneAbnormal = false;
-    const ap = localStorage.getItem('fr_animPose');
-    if (ap === 'start' || ap === 'end' || ap === 'off') state.animPose = ap;
     const rb = normalizeBaseUrl(localStorage.getItem('fr_remote_base'));
     if (rb) remoteBase = rb;
   } catch (e) {}
@@ -1285,7 +1274,6 @@ function loadSavedSettings() {
   updateSoundButton();
   document.getElementById('set-quality').value = state.quality;
   document.getElementById('set-prune-abn').checked = state.pruneAbnormal;
-  document.getElementById('set-anim-pose').value = state.animPose;
   updateAdminStatus();
   if (remoteBase) refreshServerFolders();
 }
@@ -2628,33 +2616,7 @@ function makeEnvTexture(renderer) {
   }
 }
 
-// アニメーションで決まるノードの位置・回転・拡大率（脚やタイヤなど）を、読み込んだモデルに反映する。
-// 本ツールは静止状態で描くため、他のビューアと違ってアニメーションの姿勢が反映されず、
-// 部品が別の向きや大きさで出ることがある。
-function applyAnimationPose(gltf, mode) {
-  if (!mode || mode === 'off' || !gltf.animations || !gltf.animations.length) return 0;
-  let n = 0;
-  for (const clip of gltf.animations) {
-    const t = mode === 'end' ? clip.duration : 0;
-    for (const track of clip.tracks) {
-      let pb;
-      try { pb = THREE.PropertyBinding.parseTrackName(track.name); } catch (e) { continue; }
-      const prop = pb.propertyName;
-      if (prop !== 'position' && prop !== 'quaternion' && prop !== 'scale') continue;
-      const node = THREE.PropertyBinding.findNode(gltf.scene, pb.nodeName);
-      if (!node || !node[prop]) continue;
-      try { node[prop].fromArray(track.createInterpolant().evaluate(t)); n++; } catch (e) { /* 未対応の形式は無視 */ }
-    }
-  }
-  if (n) gltf.scene.updateMatrixWorld(true);
-  return n;
-}
-
 async function buildModelWrapper(gltf, typeCode) {
-  const posed = applyAnimationPose(gltf, state.animPose);
-  const exts = (gltf.parser && gltf.parser.json && gltf.parser.json.extensionsUsed) || [];
-  if (exts.indexOf('EXT_mesh_gpu_instancing') >= 0) console.warn(`[${typeCode}] EXT_mesh_gpu_instancing を使用: 未対応のため1個しか表示されません`);
-  if (posed) console.info(`[${typeCode}] アニメーションの姿勢を反映: ${posed} 件`);
   const preset = QUALITY_PRESETS[state.quality] || QUALITY_PRESETS.standard;
   // 不要な部品の削除 → マテリアル単位で結合 → 不要マップ破棄 → テクスチャ縮小（読み込み処理の間にUIへ制御を返す）
   cullModelParts(gltf.scene, preset);
@@ -2763,12 +2725,6 @@ function disposeModelScene(m) {
 }
 
 // ポリゴン設定の変更: 読み込み済みモデルを破棄して、新しい設定で作り直す
-function onAnimPoseChange(v) {
-  state.animPose = (v === 'end' || v === 'off') ? v : 'start';
-  saveSetting('fr_animPose', state.animPose);
-  onQualityChange(state.quality);   // モデルを作り直す
-}
-
 function onPruneAbnChange(v) {
   state.pruneAbnormal = !!v;
   saveSetting('fr_pruneAbn', v ? '1' : '0');
