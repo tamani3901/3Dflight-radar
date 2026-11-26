@@ -710,6 +710,10 @@
         <select class="srv-folder-select" style="flex:1; min-width:0;"><option value="">フォルダを選択</option></select>
         <button onclick="refreshServerFolders()" title="一覧を更新">🔄</button>
       </div>
+      <label style="display:flex; align-items:center; gap:8px; font-size:12px; margin-top:8px; color:var(--text-muted);">
+        <input type="checkbox" class="srv-progressive" checked style="width:16px; height:16px; accent-color:var(--accent);">
+        徐々に読み込む（重いデータ向け・最初の数分だけ読んで開始）
+      </label>
       <button class="blue" style="width:100%; margin-top:8px;" onclick="loadServerFolder(this)">このフォルダを読み込む</button>
       <div class="srv-folder-status" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
     </div>
@@ -891,6 +895,8 @@
         <span class="legend-item"><span class="legend-swatch"></span>3Dデータ対応機の飛行時間</span>
         <span class="legend-item"><span class="legend-swatch sel"></span>選択中機体</span>
         <span id="model-flight-summary">3D対応飛行帯: なし</span>
+        <span id="prog-status" style="color:#38bdf8;"></span>
+        <button id="btn-prog-all" style="display:none; padding:2px 8px; font-size:11px;" onclick="progLoadAll()">⏩ 最後まで読み込む</button>
       </div>
       <canvas id="model-flight-canvas" height="14"></canvas>
       <input type="range" id="time-slider" min="0" max="1000" value="0">
@@ -1018,6 +1024,10 @@
         <option value="off">無効</option>
       </select>
     </div>
+    <div class="setting-row">
+      <span>異常パーツの自動削除<br><span style="font-size:10px; color:var(--text-muted);">軽量化に失敗して、元の形から大きくはみ出したパーツ（別の場所に巨大に出るタイヤなど）を自動で消します。変更するとモデルを再構築します</span></span>
+      <input type="checkbox" id="set-prune-abn" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="onPruneAbnChange(this.checked)">
+    </div>
     <div class="setting-row" style="flex-direction:column; align-items:stretch;">
       <div style="display:flex; justify-content:space-between; font-size:13px;">
         <span>エンジン音の音量（3D表示のHUDで 音:ON）</span>
@@ -1066,6 +1076,10 @@
         <select class="srv-folder-select" style="flex:1; min-width:0;"><option value="">フォルダを選択</option></select>
         <button onclick="refreshServerFolders()" title="一覧を更新">🔄</button>
       </div>
+      <label style="display:flex; align-items:center; gap:8px; font-size:12px; margin-top:8px; color:var(--text-muted);">
+        <input type="checkbox" class="srv-progressive" checked style="width:16px; height:16px; accent-color:var(--accent);">
+        徐々に読み込む（重いデータ向け・最初の数分だけ読んで開始）
+      </label>
       <button class="blue" style="width:100%; margin-top:8px;" onclick="loadServerFolder(this)">このフォルダを読み込む</button>
       <div class="srv-folder-status" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
     </div>
@@ -1135,6 +1149,8 @@ const state = {
   models: new Map(),
   globalMinTime: Infinity,
   globalMaxTime: -Infinity,
+  pruneAbnormal: true,   // 軽量化で壊れたパーツ（巨大なタイヤ等）を自動で消す
+  prog: null,            // 段階読み込み中のサーバーフォルダ
   currentTime: 0,
   isPlaying: true,
   playbackSpeed: 1,
@@ -1245,6 +1261,7 @@ function loadSavedSettings() {
     if (localStorage.getItem('fr_sound') === '1') state.soundEnabled = true;
     const q = localStorage.getItem('fr_quality');
     if (q && QUALITY_PRESETS[q]) state.quality = q;
+    if (localStorage.getItem('fr_pruneAbn') === '0') state.pruneAbnormal = false;
     const rb = normalizeBaseUrl(localStorage.getItem('fr_remote_base'));
     if (rb) remoteBase = rb;
   } catch (e) {}
@@ -1256,6 +1273,7 @@ function loadSavedSettings() {
   document.getElementById('set-volume-val').textContent = `${Math.round(state.volume * 100)}%`;
   updateSoundButton();
   document.getElementById('set-quality').value = state.quality;
+  document.getElementById('set-prune-abn').checked = state.pruneAbnormal;
   updateAdminStatus();
   if (remoteBase) refreshServerFolders();
 }
@@ -1400,7 +1418,10 @@ function hasModelFor(f) { return state.models.has(modelKeyOf(f)) || autoModelsEn
 function modelSourceLabel(f) {
   const k = modelKeyOf(f);
   const m = state.models.get(k);
-  if (m) return m.procedural ? '簡易モデル（サーバーに該当GLBなし）' : (m.auto ? `サーバー (${k}.glb)` : `あり (${k}.glb)`);
+  if (m) {
+    const ab = (m.scene && m.scene.userData.abnormal) ? `／異常パーツ${m.scene.userData.abnormal}個を除去` : '';
+    return (m.procedural ? '簡易モデル（サーバーに該当GLBなし）' : (m.auto ? `サーバー (${k}.glb)` : `あり (${k}.glb)`)) + ab;
+  }
   return autoModelsEnabled() ? '表示時にサーバーから取得' : 'なし';
 }
 
@@ -1802,12 +1823,17 @@ async function loadServerFolder(btn) {
       setTimeout(() => showToast('', false), 2500);
       return;
     }
-    const fetchBuf = async (f) => {
-      try {
-        const r = await fetch(`${remoteBase}/${encPath(folder)}/${encPath(f)}`, { mode: 'cors' });
-        return r.ok ? await r.arrayBuffer() : null;
-      } catch (e) { return null; }
-    };
+    const fetchBuf = (f) => fetchServerFile(folder, f);
+    // ファイル名の時刻が読めて、ファイル数が多い時は「徐々に読み込む」
+    const progressive = box.querySelector('.srv-progressive') && box.querySelector('.srv-progressive').checked;
+    if (progressive && files.length >= PROG_MIN_FILES && !files.some((f) => /trace_full/i.test(f))) {
+      const entries = files.map((f) => ({ f, ts: tsFromName(f) })).filter((e) => e.ts !== null);
+      if (entries.length >= files.length * 0.9) {
+        entries.sort((a, b) => a.ts - b.ts || (a.f < b.f ? -1 : 1));
+        await startProgressive(folder, entries);
+        return;
+      }
+    }
     // 4件先まで並行して取得しつつ、ファイル名順に処理する
     const queue = []; let nextIdx = 0, done = 0, fail = 0;
     const pump = () => { while (queue.length < 4 && nextIdx < files.length) { const f = files[nextIdx++]; queue.push({ f, p: fetchBuf(f) }); } };
@@ -1831,6 +1857,101 @@ async function loadServerFolder(btn) {
   } finally {
     serverLoading = false;
   }
+}
+
+const PROG_MIN_FILES = 40;          // これ以上のファイル数なら段階読み込みを使える
+const PROG_INITIAL_FILES = 30;      // 最初に読む件数
+const PROG_BATCH_FILES = 12;        // 続きを読む1回あたりの件数
+const PROG_LOOKAHEAD_SEC = 600;     // 再生位置の何秒先まで読んでおくか（再生速度が速いほど増える）
+
+function tsFromName(name) {
+  const m = /(\d{10,13})/.exec(name);
+  if (!m) return null;
+  let v = Number(m[1]);
+  if (v > 1e12) v /= 1000;
+  return (v > 1e9 && v < 4e9) ? v : null;
+}
+
+async function fetchServerFile(folder, f) {
+  try {
+    const r = await fetch(`${remoteBase}/${encPath(folder)}/${encPath(f)}`, { mode: 'cors' });
+    return r.ok ? await r.arrayBuffer() : null;
+  } catch (e) { return null; }
+}
+
+// 次の count 件を読み込む（4件先まで並行取得しつつ、時刻順に処理）
+async function progLoadBatch(prog, count) {
+  const list = prog.entries.slice(prog.next, prog.next + count);
+  if (!list.length) return;
+  const queue = []; let k = 0;
+  const pump = () => { while (queue.length < 4 && k < list.length) { const e = list[k++]; queue.push({ e, p: fetchServerFile(prog.folder, e.f) }); } };
+  pump();
+  while (queue.length) {
+    const { e, p } = queue.shift();
+    pump();
+    let buf = await p;
+    if (state.prog !== prog) return;   // 別のフォルダに切り替えられた
+    if (buf) await processImportedBuffer(e.f.split('/').pop(), buf);
+    buf = null;
+    prog.next++;
+    prog.loadedUntil = e.ts;
+  }
+  finalizeImportedData({ light: true });
+}
+
+async function progLoop(prog) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  while (state.prog === prog && prog.next < prog.entries.length) {
+    const ahead = Math.max(PROG_LOOKAHEAD_SEC, state.playbackSpeed * 180);
+    if (!(prog.loadAll || prog.loadedUntil < state.currentTime + ahead)) { await sleep(400); continue; }
+    try { await progLoadBatch(prog, PROG_BATCH_FILES); } catch (e) { console.warn('progressive load error', e); await sleep(1000); }
+    await sleep(0);
+  }
+  if (state.prog === prog && prog.next >= prog.entries.length) {
+    prog.done = true;
+    prog.loadedUntil = prog.fullMax;
+    finalizeImportedData();   // 最後に配列を詰め直す
+    updateProgStatus();
+  }
+}
+
+async function startProgressive(folder, entries) {
+  const prog = {
+    folder, entries, next: 0, done: false, loadAll: false,
+    fullMin: entries[0].ts, fullMax: entries[entries.length - 1].ts + 5, loadedUntil: -Infinity
+  };
+  state.prog = prog;
+  state.currentTime = prog.fullMin;
+  showToast('最初の部分を読み込み中...');
+  await progLoadBatch(prog, PROG_INITIAL_FILES);
+  showToast(`最初の部分を読み込みました。「完了」で開始できます（続きは自動で読み込みます）`);
+  setTimeout(() => showToast('', false), 3500);
+  if (!prog.timer) prog.timer = setInterval(updateProgStatus, 500);
+  updateProgStatus();
+  progLoop(prog);   // 続きは裏で読み込む
+}
+
+function progLoadAll() {
+  if (state.prog) { state.prog.loadAll = true; updateProgStatus(); }
+}
+
+function updateProgStatus() {
+  const p = state.prog;
+  const el = document.getElementById('prog-status');
+  const btn = document.getElementById('btn-prog-all');
+  if (!p) { if (el) el.textContent = ''; if (btn) btn.style.display = 'none'; return; }
+  let text;
+  if (p.done) {
+    text = '全て読み込み済み';
+    if (p.timer) { clearInterval(p.timer); p.timer = null; }
+  } else {
+    const pct = Math.round(p.next / p.entries.length * 100);
+    text = `読み込み済み: ${formatJSTShort(p.loadedUntil)} まで（${pct}%）`;
+    if (state.currentTime >= p.loadedUntil - 1 && p.next < p.entries.length) text = '⏳ 読み込み待ち… ' + text;
+  }
+  if (el) el.textContent = text;
+  if (btn) btn.style.display = (!p.done && !p.loadAll) ? 'inline-block' : 'none';
+  setServerStatus(p.done ? `「${p.folder}」全て読み込み済み` : `「${p.folder}」${text}`);
 }
 
 // ================= 管理者専用設定（サーバーURLの設定・パスワード保護） =================
@@ -2243,6 +2364,44 @@ async function buildReducedGeometries(srcGeos, canSimp, ratio) {
   return out;
 }
 
+function isFiniteBox(b) {
+  return isFinite(b.min.x + b.min.y + b.min.z + b.max.x + b.max.y + b.max.z);
+}
+
+// 軽量化の前後でパーツの外形を比べ、元の範囲から大きくはみ出した／座標が壊れたパーツの番号を返す。
+// 頂点クラスタリングは頂点を平均するだけなので、正常なら元の外形の内側に収まる。はみ出すのは失敗した部品。
+function findAbnormalMeshes(root, list, preBoxes) {
+  root.updateMatrixWorld(true);
+  const bad = new Set();
+  const refD = (() => {
+    const all = new THREE.Box3();
+    preBoxes.forEach((b) => { if (b && !b.isEmpty() && isFiniteBox(b)) all.union(b); });
+    return all.isEmpty() ? 1 : (all.getSize(new THREE.Vector3()).length() || 1);
+  })();
+  const s0 = new THREE.Vector3(), s1 = new THREE.Vector3();
+  list.forEach((m, i) => {
+    const pb = preBoxes[i];
+    if (!pb || pb.isEmpty()) return;
+    const b = new THREE.Box3().setFromObject(m);
+    if (b.isEmpty() || !isFiniteBox(b) || !isFiniteBox(pb)) { bad.add(i); return; }
+    pb.getSize(s0); b.getSize(s1);
+    const tol = refD * 0.004 + s0.length() * 0.03;
+    if (b.min.x < pb.min.x - tol || b.min.y < pb.min.y - tol || b.min.z < pb.min.z - tol ||
+        b.max.x > pb.max.x + tol || b.max.y > pb.max.y + tol || b.max.z > pb.max.z + tol ||
+        s1.length() > s0.length() * 1.3 + tol) bad.add(i);
+  });
+  return bad;
+}
+
+function removeMeshesByIndex(root, set) {
+  if (!set || !set.size) return 0;
+  const list = collectMeshes(root);
+  if (set.size >= list.length) return 0;   // 全部消えるなら何もしない
+  let n = 0;
+  set.forEach((i) => { const m = list[i]; if (m && m.parent) { m.parent.remove(m); n++; } });
+  return n;
+}
+
 // 室内パーツなど外から見えない部品の名前
 const INTERIOR_NAME_RE = /(seat|interior|galley|lavator|overhead|passenger|cabin[_\s-]*(int|floor|wall)|cockpit[_\s-]*(int|seat|panel|console)|bin[_\s-]*lid)/i;
 
@@ -2258,12 +2417,12 @@ function cullModelParts(root, preset) {
   if (!meshes.length) return;
   const boxes = meshes.map((m) => new THREE.Box3().setFromObject(m));
   const all = new THREE.Box3();
-  boxes.forEach((b) => { if (!b.isEmpty()) all.union(b); });
+  boxes.forEach((b) => { if (!b.isEmpty() && isFiniteBox(b)) all.union(b); });
   const diag = all.getSize(new THREE.Vector3()).length() || 1;
   const sz = new THREE.Vector3();
   const remove = [];
   meshes.forEach((m, i) => {
-    let rm = meshHiddenInChain(m);
+    let rm = meshHiddenInChain(m) || (!boxes[i].isEmpty() && !isFiniteBox(boxes[i]));
     if (!rm && !preset.keepAll) {
       const nm = (m.name || '') + ' ' + (m.parent && m.parent.name || '');
       if (INTERIOR_NAME_RE.test(nm)) rm = true;
@@ -2497,6 +2656,15 @@ async function buildModelWrapper(gltf, typeCode) {
   meshes.forEach((m, i) => { if (canSimp[i]) total += geoTriCount(m.geometry); });
   wrapper.userData.srcTris = total;
 
+  // 異常パーツ検出用に、軽量化前の外形を控える
+  const prune = state.pruneAbnormal;
+  let preBoxes = null;
+  const badSets = [];
+  if (prune) {
+    wrapper.updateMatrixWorld(true);
+    preBoxes = meshes.map((m) => new THREE.Box3().setFromObject(m));
+  }
+
   let variants = [wrapper];
   if (total > 0) {
     const r0 = Math.min(1, preset.cap / total);
@@ -2507,6 +2675,7 @@ async function buildModelWrapper(gltf, typeCode) {
         if (reduced[i] !== m.geometry) { m.geometry.dispose(); m.geometry = reduced[i]; }
       });
       geos = reduced;
+      if (prune) badSets[0] = findAbnormalMeshes(wrapper, meshes, preBoxes);
     }
     const lvl0Tris = Math.min(total, preset.cap);
     wrapper.userData.tris = lvl0Tris;
@@ -2517,10 +2686,18 @@ async function buildModelWrapper(gltf, typeCode) {
         const v = wrapper.clone();           // 材質・テクスチャは共有（メモリは増えない）
         const vm = collectMeshes(v);
         vm.forEach((m, i) => { m.geometry = g[i]; });
+        if (prune) badSets[variants.length] = findAbnormalMeshes(v, vm, preBoxes);
         variants.push(v);
         prev = g;
       }
     }
+  }
+  // 異常パーツを各レベルのモデルから取り除く（メッシュの並び順を保つため、全レベルを作り終えてから削除）
+  if (prune) {
+    let removed = 0;
+    variants.forEach((v, k) => { const n = removeMeshesByIndex(v, badSets[k]); if (k === 0) removed = n; });
+    wrapper.userData.abnormal = removed;
+    if (removed) console.warn(`[${typeCode}] 異常パーツを ${removed} 個削除しました`);
   }
   return { wrapper, variants };
 }
@@ -2548,6 +2725,12 @@ function disposeModelScene(m) {
 }
 
 // ポリゴン設定の変更: 読み込み済みモデルを破棄して、新しい設定で作り直す
+function onPruneAbnChange(v) {
+  state.pruneAbnormal = !!v;
+  saveSetting('fr_pruneAbn', v ? '1' : '0');
+  onQualityChange(state.quality);   // モデルを作り直す
+}
+
 async function onQualityChange(v) {
   if (!QUALITY_PRESETS[v]) return;
   state.quality = v;
@@ -2882,7 +3065,8 @@ function estimateBaroOffset(f) {
   return est[est.length >> 1];
 }
 
-function finalizeImportedData() {
+function finalizeImportedData(opts) {
+  const light = !!(opts && opts.light);   // 段階読み込み中: 配列の詰め直しと、変化の無い機体の再計算を省く
   state.globalMinTime = Infinity;
   state.globalMaxTime = -Infinity;
 
@@ -2891,7 +3075,8 @@ function finalizeImportedData() {
       state.flights.delete(icao);
       return;
     }
-    finalizeFlight(flight);
+    if (!light || flight.unsorted) finalizeFlight(flight);
+    if (!light || flight._fin !== flight.n) {
     flight.baroOffOwn = estimateBaroOffset(flight);
     const seen = new Set();
     const parts = [];
@@ -2910,11 +3095,18 @@ function finalizeImportedData() {
       flight.airline = bestAl;
       flight._mkVer = -1;
     }
+    flight._fin = flight.n;
+    }
     const minT = flight.t[0];
     const maxT = flight.t[flight.n - 1];
     if (minT < state.globalMinTime) state.globalMinTime = minT;
     if (maxT > state.globalMaxTime) state.globalMaxTime = maxT;
   });
+
+  if (state.prog) {   // 段階読み込み中は、ファイル名から分かる全体の時間範囲をバーの範囲にする
+    state.globalMinTime = Math.min(state.globalMinTime, state.prog.fullMin);
+    state.globalMaxTime = Math.max(state.globalMaxTime, state.prog.fullMax);
+  }
 
   const offs = [];
   state.flights.forEach((fl) => { if (fl.baroOffOwn !== null && fl.baroOffOwn !== undefined) offs.push(fl.baroOffOwn); });
@@ -2980,7 +3172,7 @@ function initFlightTimelineCanvas() {
     if (!(state.globalMaxTime > state.globalMinTime)) return;
     const rect = cvs.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-    state.currentTime = state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio;
+    state.currentTime = Math.min(playLimit(), state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio);
     drawModelFlightTimeline();
   });
 }
@@ -3078,9 +3270,23 @@ function drawModelFlightTimeline() {
 
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(timelineCache, 0, 0);
+  const pg = state.prog;
+  if (pg && !pg.done && isFinite(pg.loadedUntil)) {   // 未読み込みの範囲を暗く表示
+    const lx = toX(pg.loadedUntil);
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';
+    ctx.fillRect(lx, 0, w - lx, h);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(lx - 1, 0, 2, h);
+  }
   const curX = toX(state.currentTime);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(curX - 1, 0, 2, h);
+}
+
+// 段階読み込み中に、再生・移動してよい上限（読み込み済みの最後の時刻）
+function playLimit() {
+  const p = state.prog;
+  return (p && !p.done) ? Math.min(state.globalMaxTime, p.loadedUntil) : state.globalMaxTime;
 }
 
 function formatJSTShort(unixSec) {
@@ -3474,8 +3680,14 @@ function initMap() {
   slider.addEventListener('input', (e) => {
     if (!isFinite(state.globalMinTime) || !isFinite(state.globalMaxTime)) return;
     const ratio = parseFloat(e.target.value) / 1000;
-    state.currentTime = state.globalMinTime
-      + (state.globalMaxTime - state.globalMinTime) * ratio;
+    let tNew = state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio;
+    const lim = playLimit();
+    if (tNew > lim) {   // 読み込み済みの範囲より先には動かせない
+      tNew = lim;
+      const sp = state.globalMaxTime - state.globalMinTime;
+      if (sp > 0) e.target.value = Math.round((tNew - state.globalMinTime) / sp * 1000);
+    }
+    state.currentTime = tNew;
     drawModelFlightTimeline();
     invalidateRadar();
   });
@@ -4636,9 +4848,10 @@ function mainLoop(now) {
       }
     }
 
-    // 範囲外はクランプ（span=0 でも表示は維持）
+    // 範囲外はクランプ（span=0 でも表示は維持）。段階読み込み中は読み込み済みの最後で待つ
     if (state.currentTime < minT) state.currentTime = minT;
-    if (state.currentTime > maxT) state.currentTime = maxT;
+    const limT = playLimit();
+    if (state.currentTime > limT) state.currentTime = limT;
 
     const radarVisible = elRadar.classList.contains('active')
       && !state.is3DMode
