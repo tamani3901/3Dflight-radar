@@ -642,6 +642,46 @@
     display: none;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
   }
+
+  /* 管理者専用設定モーダル */
+  #admin-modal {
+    position: fixed; inset: 0;
+    background: rgba(2, 6, 23, 0.88);
+    backdrop-filter: blur(6px);
+    z-index: 700;
+    display: none;
+    align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  #admin-modal.visible { display: flex; }
+  .admin-card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: 18px;
+    width: 100%; max-width: 420px;
+    max-height: 90vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 12px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+  }
+  .admin-head { display: flex; align-items: center; justify-content: space-between; }
+  .admin-card .adm-box { display: none; flex-direction: column; gap: 10px; }
+  .admin-card input[type="text"], .admin-card input[type="password"] { width: 100%; }
+  input[type="password"] {
+    background: #0f172a;
+    color: #fff;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 14px;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .adm-note { font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.5; }
+  .adm-label { font-size: 12px; color: var(--accent-blue); font-weight: 600; }
+  #adm-msg { font-size: 12px; min-height: 16px; line-height: 1.4; }
+  .admin-card details { font-size: 12px; color: var(--text-muted); }
+  .admin-card details summary { cursor: pointer; margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -652,7 +692,7 @@
 <div id="import-screen" class="screen active">
   <div class="import-card">
     <h1>3D FLIGHT RADAR</h1>
-    <p>5秒ごとの全世界フライトデータ（.gz / .json）や trace_full_*.json と、3D機体モデル（{ICAO機種コード}.glb）を読み込めます。</p>
+    <p>5秒ごとの全世界フライトデータ（.gz / .json）や trace_full_*.json を読み込めます。3D機体モデルは、管理者設定のサーバーから機種ごとに自動で読み込まれます。</p>
 
     <div class="setting-row" style="margin-bottom:12px;">
       <span style="font-size:12px; text-align:left;">データ間引き（軽量化）<br><span style="font-size:10px; color:var(--text-muted);">読み込み前に選択。大きいデータほど間隔を広げるとメモリを節約できます</span></span>
@@ -666,12 +706,12 @@
 
     <div class="file-btn-group">
       <button class="blue" onclick="document.getElementById('file-input-multi').click()">
-        📄 ファイルを選ぶ（.gz / .json / .glb 複数選択可）
+        📄 ファイルを選ぶ（.gz / .json 複数選択可）
       </button>
       <button onclick="document.getElementById('file-input-dir').click()">
         📁 フォルダごと選ぶ
       </button>
-      <input type="file" id="file-input-multi" multiple accept=".json,.gz,.glb" style="display:none">
+      <input type="file" id="file-input-multi" multiple accept=".json,.gz" style="display:none">
       <input type="file" id="file-input-dir" webkitdirectory directory multiple style="display:none">
     </div>
 
@@ -693,7 +733,7 @@
         <span id="stat-time-range" class="badge">---</span>
       </div>
       <div class="file-status-row">
-        <span>読み込んだ3Dモデル (.glb):</span>
+        <span>使用中の3Dモデル（サーバー等）:</span>
         <span id="stat-models" class="badge">0 種類</span>
       </div>
       <div id="loaded-model-list" style="font-size:11px; color:var(--text-muted); margin-top:6px; word-break:break-all;"></div>
@@ -707,6 +747,58 @@
         完了（レーダーへ）
       </button>
     </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
+      <span class="admin-status" style="font-size:11px; color:var(--text-muted); text-align:left;"></span>
+      <button style="padding:6px 12px; font-size:12px;" onclick="openAdminModal()">🔒 管理者設定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 管理者専用設定モーダル -->
+<div id="admin-modal">
+  <div class="admin-card">
+    <div class="admin-head">
+      <strong style="font-size:15px;">🔒 管理者専用設定</strong>
+      <button style="padding:4px 10px; font-size:12px;" onclick="closeAdminModal()">✕ 閉じる</button>
+    </div>
+
+    <div id="adm-setup" class="adm-box">
+      <p class="adm-note">初回設定です。管理者パスワードを決めてください。パスワードはコードには含まれず、ハッシュ化してこの端末のブラウザにだけ保存されます。</p>
+      <input type="password" id="adm-new1" placeholder="新しいパスワード（6文字以上）" autocomplete="new-password">
+      <input type="password" id="adm-new2" placeholder="もう一度入力" autocomplete="new-password" onkeydown="if(event.key==='Enter')adminSetup()">
+      <button class="primary" onclick="adminSetup()">パスワードを設定</button>
+    </div>
+
+    <div id="adm-login" class="adm-box">
+      <p class="adm-note">管理者パスワードを入力してください。</p>
+      <input type="password" id="adm-pass" placeholder="パスワード" autocomplete="current-password" onkeydown="if(event.key==='Enter')adminLogin()">
+      <button class="primary" onclick="adminLogin()">ロック解除</button>
+    </div>
+
+    <div id="adm-panel" class="adm-box">
+      <span class="adm-label">3DモデルサーバーのベースURL</span>
+      <input type="text" id="adm-url" placeholder="https://xxxx.trycloudflare.com" autocapitalize="off" autocorrect="off" spellcheck="false" onkeydown="if(event.key==='Enter')adminSaveUrl()">
+      <p class="adm-note">機体を表示するとき、ベースURL/{ICAO機種コード}.glb（例: B789.glb）を自動で取得します。サーバーに無い機種（404）は簡易モデルで表示します。空のまま保存するとサーバー読み込みなしになります。</p>
+      <div style="display:flex; gap:8px;">
+        <button class="primary" style="flex:1;" onclick="adminSaveUrl()">保存</button>
+        <button style="flex:1;" onclick="adminSaveUrl(true)">URLを消去</button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="text" id="adm-test-code" value="B789" style="width:90px;" maxlength="4" autocapitalize="characters">
+        <button style="flex:1;" onclick="adminTestUrl()">接続テスト（この機種を確認）</button>
+      </div>
+      <details>
+        <summary>管理者パスワードを変更</summary>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <input type="password" id="adm-chg1" placeholder="新しいパスワード（6文字以上）" autocomplete="new-password">
+          <input type="password" id="adm-chg2" placeholder="もう一度入力" autocomplete="new-password">
+          <button onclick="adminChangePassword()">パスワードを変更</button>
+        </div>
+      </details>
+    </div>
+
+    <div id="adm-msg"></div>
   </div>
 </div>
 
@@ -946,9 +1038,17 @@
   </div>
 
   <div class="settings-section">
+    <h3>管理者専用設定</h3>
+    <div class="setting-row">
+      <span>3DモデルサーバーのURL（パスワード必要）<br><span class="admin-status" style="font-size:10px; color:var(--text-muted);"></span></span>
+      <button onclick="openAdminModal()">🔒 管理者設定を開く</button>
+    </div>
+  </div>
+
+  <div class="settings-section">
     <h3>追加のファイル読み込み</h3>
     <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
-      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json、3Dモデル（.glb）を追加でインポートできます。
+      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json を追加でインポートできます。
     </p>
     <div class="setting-row">
       <span style="font-size:12px;">データ間引き（これから読む分に適用）</span>
@@ -1125,6 +1225,8 @@ function loadSavedSettings() {
     if (localStorage.getItem('fr_sound') === '1') state.soundEnabled = true;
     const q = localStorage.getItem('fr_quality');
     if (q && QUALITY_PRESETS[q]) state.quality = q;
+    const rb = normalizeBaseUrl(localStorage.getItem('fr_remote_base'));
+    if (rb) remoteBase = rb;
   } catch (e) {}
   document.getElementById('set-basemap').value = state.baseMap;
   document.getElementById('set-groundmap').value = state.groundMap;
@@ -1134,6 +1236,7 @@ function loadSavedSettings() {
   document.getElementById('set-volume-val').textContent = `${Math.round(state.volume * 100)}%`;
   updateSoundButton();
   document.getElementById('set-quality').value = state.quality;
+  updateAdminStatus();
 }
 function saveSetting(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function changeBaseMap() {
@@ -1247,6 +1350,489 @@ async function processImportedBuffer(filename, arrayBuffer) {
 
     if (parsedAny) state.importedFileCount++;
   } catch (err) {}
+}
+
+// ================= サーバー（Cloudflare Tunnel）からの3Dモデル自動取得 =================
+// 機体の {ICAO機種コード}.glb を ベースURL/{ICAO機種コード}.glb から取得する。
+// 404（またはサーバーに繋がらない場合）はエラーで止めず、簡易モデル（プロシージャル生成）で表示する。
+const DEFAULT_REMOTE_BASE = '';             // 初期値は空白。管理者設定で1度入力すると、この端末のブラウザに保存される
+const PROCEDURAL_WITHOUT_SERVER = false;    // true にすると、サーバー未設定でもモデルの無い機体を簡易モデルで表示する
+const REMOTE_BUF_MAX_BYTES = 150 * 1024 * 1024;  // ダウンロード済みGLBをメモリに保持する上限
+const REMOTE_MAX_PARALLEL = 3;              // 同時ダウンロード数
+const REMOTE_RETRY_MS = 30000;              // 通信エラーで簡易モデルになった機種を、再取得してよくなるまでの時間
+const FETCHABLE_TYPE_RE = /^[A-Z0-9]{2,4}$/;
+
+let remoteBase = DEFAULT_REMOTE_BASE;
+let remoteGen = 0;                          // URL変更のたびに増やす（古いURLの取得結果を捨てるため）
+const remoteBufCache = new Map();           // 機種コード → ArrayBuffer（LRU）
+let remoteBufBytes = 0;
+const remotePending = new Map();            // 取得中の機種コード → Promise（同じ機種の二重取得を防ぐ）
+let remoteActive = 0;
+const remoteWaiters = [];
+
+function autoModelsEnabled() { return !!remoteBase || PROCEDURAL_WITHOUT_SERVER; }
+function hasModelFor(f) { return state.models.has(modelKeyOf(f)) || autoModelsEnabled(); }
+
+function modelSourceLabel(f) {
+  const k = modelKeyOf(f);
+  const m = state.models.get(k);
+  if (m) return m.procedural ? '簡易モデル（サーバーに該当GLBなし）' : (m.auto ? `サーバー (${k}.glb)` : `あり (${k}.glb)`);
+  return autoModelsEnabled() ? '表示時にサーバーから取得' : 'なし';
+}
+
+function normalizeBaseUrl(s) {
+  s = String(s || '').trim();
+  if (!s) return '';
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'https://' + s;
+  let u;
+  try { u = new URL(s); } catch (e) { return null; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  return (u.origin + u.pathname).replace(/\/+$/, '');
+}
+
+function remoteSlot(fn) {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      remoteActive++;
+      Promise.resolve().then(fn).then(resolve, reject).finally(() => {
+        remoteActive--;
+        const next = remoteWaiters.shift();
+        if (next) next();
+      });
+    };
+    if (remoteActive < REMOTE_MAX_PARALLEL) run(); else remoteWaiters.push(run);
+  });
+}
+
+// GLBのバイナリを取得（メモリキャッシュ済みならそれを返す）
+async function fetchRemoteBuffer(code) {
+  const hit = remoteBufCache.get(code);
+  if (hit) { remoteBufCache.delete(code); remoteBufCache.set(code, hit); return hit; }
+  if (!remoteBase) throw new Error('server url is empty');
+  const gen = remoteGen;
+  const url = `${remoteBase}/${encodeURIComponent(code)}.glb`;
+  const buf = await remoteSlot(async () => {
+    const r = await fetch(url, { mode: 'cors' });
+    if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+    return r.arrayBuffer();
+  });
+  const h = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  if (h.length < 4 || h[0] !== 0x67 || h[1] !== 0x6C || h[2] !== 0x54 || h[3] !== 0x46) {   // 'glTF'
+    const e = new Error('not a GLB'); e.status = 404; throw e;   // エラーページ等が200で返った場合も「無い」扱い
+  }
+  if (gen !== remoteGen) { const e = new Error('stale'); e.status = -1; throw e; }
+  remoteBufCache.set(code, buf);
+  remoteBufBytes += buf.byteLength;
+  while (remoteBufBytes > REMOTE_BUF_MAX_BYTES && remoteBufCache.size > 1) {
+    const k = remoteBufCache.keys().next().value;
+    remoteBufBytes -= remoteBufCache.get(k).byteLength;
+    remoteBufCache.delete(k);
+  }
+  return buf;
+}
+
+function dropRemoteBuffer(code) {
+  const b = remoteBufCache.get(code);
+  if (b) { remoteBufBytes -= b.byteLength; remoteBufCache.delete(code); }
+}
+
+// 自動取得モデルの登録（サーバーGLB or 簡易モデル）
+function putAutoModel(code, opts) {
+  state.modelsVer++;
+  const proc = !!opts.procedural;
+  nearbyCache.forEach((c, icao) => {
+    if (c.userData && c.userData.modelType === code) {
+      if (nearbyPlanesGroup) nearbyPlanesGroup.remove(c);
+      nearbyCache.delete(icao);
+    }
+  });
+  const prev = state.models.get(code);
+  if (prev) {
+    disposeModelScene(prev);
+    prev.source = proc ? null : { remote: true };
+    prev.procedural = proc; prev.retryAt = opts.retryAt || 0; prev.failed = false; prev.auto = true;
+    return prev;
+  }
+  const m = {
+    source: proc ? null : { remote: true }, scene: null, loading: null, failed: false, lastUsed: 0,
+    rotX: 0, rotY: 0, rotZ: 0, scale: 1.0, key: code, base: null, touched: false,
+    auto: true, procedural: proc, retryAt: opts.retryAt || 0
+  };
+  state.models.set(code, m);
+  return m;
+}
+
+// その機種のモデルを用意する。ローカル登録があればそれを優先 → サーバー → 404/通信エラーなら簡易モデル
+function ensureRemoteModel(code, force) {
+  code = String(code || '').toUpperCase().trim();
+  if (!code || !autoModelsEnabled()) return Promise.resolve(false);
+  const ex = state.models.get(code);
+  if (ex && !ex.auto) return Promise.resolve(true);
+  if (ex && !(force || (ex.procedural && ex.retryAt && Date.now() > ex.retryAt))) return Promise.resolve(true);
+  if (remotePending.has(code)) return remotePending.get(code);
+  const gen = remoteGen;
+  const p = (async () => {
+    if (!remoteBase || !FETCHABLE_TYPE_RE.test(code)) { putAutoModel(code, { procedural: true }); return true; }
+    try {
+      await fetchRemoteBuffer(code);
+      if (gen !== remoteGen) return false;
+      putAutoModel(code, { procedural: false });
+    } catch (e) {
+      if (gen !== remoteGen) return false;
+      const missing = e && (e.status === 404 || e.status === 410);
+      if (!missing) console.warn('server model fetch failed:', code, e);
+      putAutoModel(code, { procedural: true, retryAt: missing ? 0 : Date.now() + REMOTE_RETRY_MS });
+    }
+    return true;
+  })();
+  remotePending.set(code, p);
+  p.finally(() => { if (remotePending.get(code) === p) remotePending.delete(code); });
+  return p;
+}
+
+// URLを変えた時：自動取得したモデルとキャッシュを全部捨てる（ローカル読込のモデルは残す）
+function resetRemoteModels() {
+  remoteGen++;
+  remotePending.clear();
+  remoteBufCache.clear(); remoteBufBytes = 0;
+  const del = [];
+  state.models.forEach((m, k) => { if (m.auto) del.push(k); });
+  del.forEach((k) => { disposeModelScene(state.models.get(k)); state.models.delete(k); });
+  state.modelsVer++;
+  nearbyCache.clear();
+  if (nearbyPlanesGroup) while (nearbyPlanesGroup.children.length > 0) nearbyPlanesGroup.remove(nearbyPlanesGroup.children[0]);
+  timelineDirty = true;
+}
+
+// ---- 簡易3Dモデル（サーバーにGLBが無い機種用）。機首 -Z / 右翼 +X / 上 +Y ----
+const HELI_CODES = new Set(['R22', 'R44', 'R66', 'B06', 'B407', 'B412', 'B429', 'AS50', 'AS55', 'AS65', 'EC20', 'EC30', 'EC35', 'EC45', 'EC55',
+  'A109', 'A119', 'A139', 'A169', 'S76', 'S92', 'S61', 'H60', 'H64', 'H47', 'MI8', 'MI26', 'KA32']);
+const GA_SINGLE_CODES = new Set(['C172', 'C182', 'C208', 'P28A', 'SR20', 'SR22', 'TBM9', 'TBM8', 'PA46', 'DA40', 'PC12']);
+const PROP_TWIN_CODES = new Set(['DA62', 'BE58', 'BE9L', 'BE20', 'AT42', 'AT43', 'AT45', 'AT72', 'AT75', 'AT76',
+  'DH8A', 'DH8B', 'DH8C', 'DH8D', 'SF34', 'B190', 'JS41', 'BN2P', 'SW4', 'YS11']);
+const FOUR_ENGINE_CODES = new Set(['B741', 'B742', 'B743', 'B744', 'B748', 'B701', 'B703', 'A342', 'A343', 'A345', 'A346', 'A388', 'A124', 'C17', 'C5M']);
+
+function buildProceduralModel(typeCode) {
+  const code = String(typeCode || '').toUpperCase().split('_').pop();
+  const real = getModelRealSize(code);
+  const S = real.size;
+  const root = new THREE.Group();
+  root.userData.realSize = S;
+  root.userData.sizeKnown = real.known;
+  root.userData.tris = 0;
+  root.userData.srcTris = 0;
+  root.userData.procedural = true;
+
+  const mk = (color, rough, metal, extra) => new THREE.MeshStandardMaterial(Object.assign(
+    { color, roughness: rough, metalness: metal, side: THREE.DoubleSide }, extra || {}));
+  const white = mk(0xe5e7eb, 0.65, 0.15);
+  const dark = mk(0x475569, 0.6, 0.3);
+  const accent = mk(0x2563eb, 0.6, 0.1);
+  const disc = mk(0x1e293b, 1, 0, { transparent: true, opacity: 0.35 });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); root.add(m); return m; };
+
+  // 平らな板: 点は (x, z)。厚みは Y 方向、Y を中心に配置
+  const wingGeo = (pts, th) => {
+    const sh = new THREE.Shape();
+    pts.forEach((p, i) => { if (i === 0) sh.moveTo(p[0], p[1]); else sh.lineTo(p[0], p[1]); });
+    const g = new THREE.ExtrudeGeometry(sh, { depth: th, bevelEnabled: false });
+    g.rotateX(Math.PI / 2);
+    g.translate(0, th / 2, 0);
+    return g;
+  };
+  // 垂直尾翼: 点は (z, y)。厚みは X 方向
+  const finGeo = (pts, th) => {
+    const sh = new THREE.Shape();
+    pts.forEach((p, i) => { if (i === 0) sh.moveTo(p[0], p[1]); else sh.lineTo(p[0], p[1]); });
+    const g = new THREE.ExtrudeGeometry(sh, { depth: th, bevelEnabled: false });
+    g.rotateY(-Math.PI / 2);
+    g.translate(th / 2, 0, 0);
+    return g;
+  };
+  const zCyl = (r0, r1, len, seg) => { const g = new THREE.CylinderGeometry(r0, r1, len, seg || 16); g.rotateX(Math.PI / 2); return g; };
+
+  // ---------- ヘリコプター ----------
+  if (HELI_CODES.has(code)) {
+    const rb = S * 0.085;
+    const cabin = add(new THREE.SphereGeometry(1, 18, 12), white, 0, 0, -0.05 * S);
+    cabin.scale.set(rb, rb * 0.95, S * 0.15);
+    add(zCyl(rb * 0.12, rb * 0.32, S * 0.40, 10), white, 0, rb * 0.15, 0.25 * S);   // 細い方（上）が +Z 側＝後ろ
+    add(finGeo([[0.38 * S, rb * 0.15], [0.455 * S, rb * 1.5], [0.485 * S, rb * 1.5], [0.47 * S, rb * 0.15]], rb * 0.12), accent, 0, 0, 0);
+    add(new THREE.CylinderGeometry(rb * 0.1, rb * 0.1, rb * 0.3, 8), dark, 0, rb * 1.05, -0.05 * S);
+    const rr = S * 0.46, ry = rb * 1.25;
+    add(new THREE.CylinderGeometry(rr, rr, S * 0.003, 36), disc, 0, ry, -0.05 * S);
+    add(new THREE.BoxGeometry(rr * 2, S * 0.004, S * 0.012), dark, 0, ry, -0.05 * S);
+    const b2 = add(new THREE.BoxGeometry(rr * 2, S * 0.004, S * 0.012), dark, 0, ry, -0.05 * S);
+    b2.rotation.y = Math.PI / 2;
+    for (const sx of [-1, 1]) add(zCyl(S * 0.006, S * 0.006, S * 0.28, 8), dark, sx * rb * 0.75, -rb * 1.05, -0.04 * S);
+    return root;
+  }
+
+  // ---------- 固定翼（ジェット / ターボプロップ / 小型機） ----------
+  const gaSingle = GA_SINGLE_CODES.has(code);
+  const propTwin = PROP_TWIN_CODES.has(code);
+  const fourEng = FOUR_ENGINE_CODES.has(code);
+  const jet = !gaSingle && !propTwin;
+  const Lf = S * 0.9;                       // 胴体の長さ
+  const R = Math.max(0.45, Lf * (gaSingle ? 0.075 : 0.05));   // 胴体の半径
+  const b = S / 2;                          // 片翼の長さ
+
+  add(zCyl(R, R, Lf * 0.70, 18), white, 0, 0, -0.02 * Lf);
+  const nose = add(zCyl(R * 0.12, R, Lf * 0.13, 18), white, 0, 0, -0.435 * Lf);
+  nose.geometry.rotateX(Math.PI);           // 細い側を前（-Z）へ
+  add(zCyl(R * 0.18, R, Lf * 0.17, 18), white, 0, 0, 0.415 * Lf);   // 細い側が後ろ（+Z）
+
+  // 主翼
+  const z0 = (gaSingle ? -0.20 : -0.08) * Lf;
+  const sweep = (jet ? 0.17 : 0) * Lf;
+  const rootC = (jet ? 0.17 : 0.11) * Lf, tipC = (jet ? 0.04 : 0.07) * Lf;
+  const wy = gaSingle ? R * 0.65 : -R * 0.45;
+  const wth = Math.max(0.12, R * 0.12);
+  for (const sx of [1, -1]) {
+    add(wingGeo([[0, z0], [sx * b, z0 + sweep], [sx * b, z0 + sweep + tipC], [0, z0 + rootC]], wth), white, 0, wy, 0);
+  }
+  // 水平尾翼・垂直尾翼
+  const hb = b * (jet ? 0.36 : 0.32), hz = 0.36 * Lf, hsw = (jet ? 0.05 : 0.01) * Lf;
+  for (const sx of [1, -1]) {
+    add(wingGeo([[0, hz], [sx * hb, hz + hsw], [sx * hb, hz + hsw + 0.035 * Lf], [0, hz + 0.09 * Lf]], wth * 0.8), white, 0, R * 0.2, 0);
+  }
+  const fh = Lf * (gaSingle ? 0.13 : 0.16);
+  add(finGeo([[0.30 * Lf, R * 0.7], [0.44 * Lf, R * 0.7 + fh], [0.485 * Lf, R * 0.7 + fh], [0.50 * Lf, R * 0.7]], wth), accent, 0, 0, 0);
+
+  // エンジン / プロペラ
+  if (jet) {
+    const xs = fourEng ? [-0.46, -0.22, 0.22, 0.46] : [-0.30, 0.30];
+    for (const f of xs) {
+      const ex = f * b, ez = z0 + sweep * Math.abs(f) - 0.03 * Lf;
+      add(zCyl(R * 0.42, R * 0.36, Lf * 0.09, 14), dark, ex, wy - R * 0.4, ez);
+    }
+  } else if (propTwin) {
+    for (const sx of [-1, 1]) {
+      const ex = sx * 0.30 * b, ez = z0 - 0.04 * Lf;
+      add(zCyl(R * 0.3, R * 0.3, Lf * 0.16, 12), dark, ex, wy, ez);
+      add(new THREE.CylinderGeometry(R * 1.05, R * 1.05, 0.04, 24).rotateX(Math.PI / 2), disc, ex, wy, ez - Lf * 0.09);
+    }
+  } else {
+    add(new THREE.CylinderGeometry(R * 1.2, R * 1.2, 0.04, 24).rotateX(Math.PI / 2), disc, 0, 0, -0.5 * Lf - 0.05);
+  }
+  return root;
+}
+
+// ================= 管理者専用設定（サーバーURLの設定・パスワード保護） =================
+// パスワードはコードに一切書かない。初回に管理者が決めたパスワードを、ソルト付きでハッシュ化して
+// この端末（ブラウザの localStorage）にだけ保存する。URLもこの端末のブラウザに保存される。
+const ADMIN_KEYS = { base: 'fr_remote_base', salt: 'fr_admin_salt', hash: 'fr_admin_hash', algo: 'fr_admin_algo', fail: 'fr_admin_fail' };
+let adminUnlocked = false;
+
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+function b64e(bytes) { let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
+function b64d(str) { const s = atob(str); const o = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) o[i] = s.charCodeAt(i); return o; }
+function concatBytes() {
+  let n = 0; for (const a of arguments) n += a.length;
+  const o = new Uint8Array(n); let p = 0;
+  for (const a of arguments) { o.set(a, p); p += a.length; }
+  return o;
+}
+
+// crypto.subtle が使えない環境（http のLAN接続など）用の SHA-256
+function sha256Bytes(data) {
+  const K = [], H = [];
+  let n = 2, c = 0;
+  while (c < 64) {
+    let p = true;
+    for (let i = 2; i * i <= n; i++) if (n % i === 0) { p = false; break; }
+    if (p) {
+      if (c < 8) H[c] = (Math.pow(n, 0.5) % 1 * 4294967296) | 0;
+      K[c] = (Math.pow(n, 1 / 3) % 1 * 4294967296) | 0;
+      c++;
+    }
+    n++;
+  }
+  const l = data.length, padLen = ((l + 9 + 63) >> 6) << 6;
+  const m = new Uint8Array(padLen);
+  m.set(data); m[l] = 0x80;
+  const dv = new DataView(m.buffer);
+  dv.setUint32(padLen - 8, Math.floor(l * 8 / 4294967296));
+  dv.setUint32(padLen - 4, (l * 8) >>> 0);
+  const w = new Int32Array(64);
+  for (let o = 0; o < padLen; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(o + i * 4);
+    for (let i = 16; i < 64; i++) {
+      const a = w[i - 15], bb = w[i - 2];
+      const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);
+      const s1 = ((bb >>> 17) | (bb << 15)) ^ ((bb >>> 19) | (bb << 13)) ^ (bb >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+    }
+    let a = H[0], b2 = H[1], c2 = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[i] + w[i]) | 0;
+      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const maj = (a & b2) ^ (a & c2) ^ (b2 & c2);
+      const t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c2; c2 = b2; b2 = a; a = (t1 + t2) | 0;
+    }
+    H[0] = (H[0] + a) | 0; H[1] = (H[1] + b2) | 0; H[2] = (H[2] + c2) | 0; H[3] = (H[3] + d) | 0;
+    H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+  }
+  const out = new Uint8Array(32), od = new DataView(out.buffer);
+  for (let i = 0; i < 8; i++) od.setInt32(i * 4, H[i]);
+  return out;
+}
+
+async function adminDerive(pw, salt, algo) {
+  const enc = new TextEncoder().encode(pw);
+  if (algo === 'pbkdf2') {
+    if (!(window.crypto && crypto.subtle)) throw new Error('crypto.subtle unavailable');
+    const key = await crypto.subtle.importKey('raw', enc, 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 150000 }, key, 256);
+    return new Uint8Array(bits);
+  }
+  let h = sha256Bytes(concatBytes(salt, enc));
+  for (let i = 0; i < 3000; i++) h = sha256Bytes(concatBytes(h, enc, salt));
+  return h;
+}
+
+function adminHasPassword() { return !!(lsGet(ADMIN_KEYS.hash) && lsGet(ADMIN_KEYS.salt)); }
+
+async function adminStorePassword(pw) {
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  const algo = (window.crypto && crypto.subtle) ? 'pbkdf2' : 'sha256x';
+  const hash = b64e(await adminDerive(pw, salt, algo));
+  return lsSet(ADMIN_KEYS.salt, b64e(salt)) && lsSet(ADMIN_KEYS.algo, algo) && lsSet(ADMIN_KEYS.hash, hash);
+}
+
+async function adminVerify(pw) {
+  const salt = b64d(lsGet(ADMIN_KEYS.salt));
+  const algo = lsGet(ADMIN_KEYS.algo) || 'pbkdf2';
+  const got = b64e(await adminDerive(pw, salt, algo));
+  const want = lsGet(ADMIN_KEYS.hash) || '';
+  let diff = got.length ^ want.length;
+  for (let i = 0; i < got.length && i < want.length; i++) diff |= got.charCodeAt(i) ^ want.charCodeAt(i);
+  return diff === 0;
+}
+
+function adminLockRemainingMs() {
+  try {
+    const f = JSON.parse(lsGet(ADMIN_KEYS.fail) || 'null');
+    return f && f.until > Date.now() ? f.until - Date.now() : 0;
+  } catch (e) { return 0; }
+}
+function adminRegisterFailure() {
+  let n = 0;
+  try { const f = JSON.parse(lsGet(ADMIN_KEYS.fail) || 'null'); if (f) n = f.n || 0; } catch (e) {}
+  n++;
+  lsSet(ADMIN_KEYS.fail, JSON.stringify({ n, until: n >= 5 ? Date.now() + Math.min(3600000, 60000 * (n - 4)) : 0 }));
+}
+
+function adminMsg(text, ok) {
+  const el = document.getElementById('adm-msg');
+  el.textContent = text || '';
+  el.style.color = ok ? '#4ade80' : '#f87171';
+}
+function admEl(id) { return document.getElementById(id); }
+
+function openAdminModal() {
+  adminUnlocked = false;
+  admEl('admin-modal').classList.add('visible');
+  renderAdminModal();
+}
+function closeAdminModal() {
+  adminUnlocked = false;
+  admEl('admin-modal').classList.remove('visible');
+  ['adm-new1', 'adm-new2', 'adm-pass', 'adm-chg1', 'adm-chg2'].forEach((id) => { admEl(id).value = ''; });
+  adminMsg('');
+}
+function renderAdminModal() {
+  const has = adminHasPassword();
+  admEl('adm-setup').style.display = !has ? 'flex' : 'none';
+  admEl('adm-login').style.display = (has && !adminUnlocked) ? 'flex' : 'none';
+  admEl('adm-panel').style.display = adminUnlocked ? 'flex' : 'none';
+  adminMsg('');
+  if (adminUnlocked) admEl('adm-url').value = remoteBase;
+}
+
+async function adminSetup() {
+  const p1 = admEl('adm-new1').value, p2 = admEl('adm-new2').value;
+  if (p1.length < 6) return adminMsg('パスワードは6文字以上にしてください');
+  if (p1 !== p2) return adminMsg('確認用のパスワードが一致しません');
+  try {
+    if (!(await adminStorePassword(p1))) return adminMsg('この環境ではブラウザに保存できません（プライベートモード等）');
+  } catch (e) { return adminMsg('パスワードを設定できませんでした'); }
+  admEl('adm-new1').value = ''; admEl('adm-new2').value = '';
+  adminUnlocked = true;
+  renderAdminModal();
+  adminMsg('パスワードを設定しました。サーバーURLを入力してください', true);
+}
+
+async function adminLogin() {
+  const wait = adminLockRemainingMs();
+  if (wait > 0) return adminMsg(`試行回数が多すぎます。${Math.ceil(wait / 1000)}秒後にやり直してください`);
+  const pw = admEl('adm-pass').value;
+  let ok = false;
+  try { ok = await adminVerify(pw); } catch (e) { return adminMsg('確認に失敗しました'); }
+  admEl('adm-pass').value = '';
+  if (!ok) {
+    adminRegisterFailure();
+    const w2 = adminLockRemainingMs();
+    return adminMsg(w2 > 0 ? `パスワードが違います。${Math.ceil(w2 / 1000)}秒ロックします` : 'パスワードが違います');
+  }
+  lsDel(ADMIN_KEYS.fail);
+  adminUnlocked = true;
+  renderAdminModal();
+}
+
+function adminSaveUrl(clear) {
+  if (!adminUnlocked) return;
+  const raw = clear ? '' : admEl('adm-url').value;
+  const n = normalizeBaseUrl(raw);
+  if (n === null) return adminMsg('URLの形式が正しくありません（例: https://xxxx.trycloudflare.com）');
+  const changed = n !== remoteBase;
+  if (n) { if (!lsSet(ADMIN_KEYS.base, n)) return adminMsg('この環境ではブラウザに保存できません'); }
+  else lsDel(ADMIN_KEYS.base);
+  remoteBase = n;
+  if (changed) resetRemoteModels();
+  admEl('adm-url').value = n;
+  updateAdminStatus();
+  adminMsg(n ? '保存しました' : 'URLを空にしました（サーバー読み込みなし）', true);
+}
+
+async function adminTestUrl() {
+  if (!adminUnlocked) return;
+  const n = normalizeBaseUrl(admEl('adm-url').value);
+  if (!n) return adminMsg('テストするURLを入力してください');
+  const code = (admEl('adm-test-code').value || 'B789').toUpperCase().trim();
+  adminMsg('接続テスト中...', true);
+  try {
+    const r = await fetch(`${n}/${encodeURIComponent(code)}.glb`, { method: 'HEAD', mode: 'cors', cache: 'no-store' });
+    if (r.ok) adminMsg(`OK: ${code}.glb を取得できます`, true);
+    else if (r.status === 404) adminMsg(`サーバーには繋がりましたが ${code}.glb がありません（この機種は簡易モデル表示になります）`, true);
+    else adminMsg(`サーバーが HTTP ${r.status} を返しました`);
+  } catch (e) {
+    adminMsg('接続できません（URLの間違い・トンネル停止・CORS未許可の可能性）');
+  }
+}
+
+async function adminChangePassword() {
+  if (!adminUnlocked) return;
+  const p1 = admEl('adm-chg1').value, p2 = admEl('adm-chg2').value;
+  if (p1.length < 6) return adminMsg('パスワードは6文字以上にしてください');
+  if (p1 !== p2) return adminMsg('確認用のパスワードが一致しません');
+  try {
+    if (!(await adminStorePassword(p1))) return adminMsg('保存できませんでした');
+  } catch (e) { return adminMsg('変更できませんでした'); }
+  admEl('adm-chg1').value = ''; admEl('adm-chg2').value = '';
+  adminMsg('パスワードを変更しました', true);
+}
+
+function updateAdminStatus() {
+  document.querySelectorAll('.admin-status').forEach((el) => {
+    el.textContent = remoteBase ? '🟢 3Dモデルサーバー: 設定済み' : '⚪ 3Dモデルサーバー: 未設定';
+  });
 }
 
 // 塗装モデルのファイル名: 「航空会社コード_機種コード.glb」（例: CCA_B744.glb → Air China の 747-400）
@@ -1769,7 +2355,7 @@ async function onQualityChange(v) {
 
 function evictModels(keepType) {
   const loaded = [];
-  state.models.forEach((m, k) => { if (m.scene) loaded.push([k, m]); });
+  state.models.forEach((m, k) => { if (m.scene && !m.procedural) loaded.push([k, m]); });
   if (loaded.length <= MAX_LOADED_MODELS) return;
   const inUse = new Set([keepType]);
   if (state.is3DMode && state.selectedIcao) {
@@ -1796,6 +2382,17 @@ function ensureModelLoaded(typeCode) {
   m.lastUsed = performance.now();
   if (m.scene) return Promise.resolve(true);
   if (m.loading) return m.loading;
+  if (m.procedural) {   // サーバーに無い機種: 簡易モデルをその場で生成
+    try {
+      const w = buildProceduralModel(typeCode);
+      m.scene = w; m.variants = [w]; m.failed = false;
+      return Promise.resolve(true);
+    } catch (err) {
+      console.warn('procedural model failed:', typeCode, err);
+      m.failed = true;
+      return Promise.resolve(false);
+    }
+  }
 
   const task = async () => {
     try {
@@ -1803,6 +2400,8 @@ function ensureModelLoaded(typeCode) {
       let buf;
       if (m.source && m.source.file) {
         buf = await m.source.file.arrayBuffer();
+      } else if (m.source && m.source.remote) {
+        buf = await fetchRemoteBuffer(typeCode);   // サーバー取得済みならメモリのキャッシュを使い回す
       } else {
         const r = await fetch(m.source.url);
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1819,6 +2418,15 @@ function ensureModelLoaded(typeCode) {
       return true;
     } catch (err) {
       console.warn('GLB load failed:', typeCode, err);
+      if (m.auto) {   // サーバーのGLBが壊れている/読めない場合も、止めずに簡易モデルで表示を続ける
+        try {
+          dropRemoteBuffer(typeCode);
+          m.procedural = true; m.source = null; m.retryAt = Date.now() + REMOTE_RETRY_MS;
+          const w = buildProceduralModel(typeCode);
+          m.scene = w; m.variants = [w]; m.failed = false;
+          return true;
+        } catch (e2) {}
+      }
       m.failed = true;
       return false;
     } finally {
@@ -2135,8 +2743,10 @@ function updateImportUI() {
       rangeEl.textContent = '---';
     }
   }
-  document.getElementById('stat-models').textContent = `${state.models.size} 種類`;
-  const modelNames = Array.from(state.models.keys()).join(', ');
+  const realModelKeys = [];
+  state.models.forEach((m, k) => { if (!m.procedural) realModelKeys.push(k); });
+  document.getElementById('stat-models').textContent = `${realModelKeys.length} 種類`;
+  const modelNames = realModelKeys.join(', ');
   document.getElementById('loaded-model-list').textContent = modelNames ? `登録済モデル: ${modelNames}` : '';
 
   const hasFlights = state.flights.size > 0;
@@ -2206,7 +2816,7 @@ function drawModelFlightTimeline() {
 
     c.fillStyle = 'rgba(245, 158, 11, 0.72)';
     state.flights.forEach((flight) => {
-      if (!flight.n || !state.models.has(modelKeyOf(flight))) return;
+      if (!flight.n || !hasModelFor(flight)) return;
       has3DFlightCount++;
       const T = flight.t;
       const n = flight.n;
@@ -2243,7 +2853,7 @@ function drawModelFlightTimeline() {
     if (has3DFlightCount > 0 && min3DT < Infinity) {
       summaryEl.textContent = `3D対応(${has3DFlightCount}機): ${formatJSTShort(min3DT)}〜${formatJSTShort(max3DT)}`;
     } else {
-      summaryEl.textContent = state.models.size === 0 ? '3Dモデル(.glb)未読込' : '3D対応機体の飛行なし';
+      summaryEl.textContent = (state.models.size === 0 && !autoModelsEnabled()) ? '3Dモデル未設定（管理者設定でサーバーURLを設定）' : '3D対応機体の飛行なし';
     }
     timelineCacheSel = state.selectedIcao;
     timelineDirty = false;
@@ -2410,7 +3020,7 @@ function showInspectorDetail(icao) {
   document.getElementById('insp-alt-spd').textContent =
     `${isGround ? 'GND' : f.alt[li].toLocaleString() + ' ft'} / ${f.spd[li]} kt`;
   document.getElementById('insp-pos').textContent = `${(f.lat[li] / 1e6).toFixed(3)}, ${(f.lon[li] / 1e6).toFixed(3)}`;
-  document.getElementById('insp-model').textContent = state.models.has(modelKeyOf(f)) ? `あり (${modelKeyOf(f)}.glb)` : 'なし';
+  document.getElementById('insp-model').textContent = modelSourceLabel(f);
 }
 
 function jumpToRadarWithSelected() {
@@ -2928,13 +3538,19 @@ async function enter3DView() {
     state.sceneReady = false;
     document.getElementById('view3d-screen').classList.add('active');
 
+    if (autoModelsEnabled()) {
+      showToast('サーバーから3Dモデルを取得中...');
+      await ensureRemoteModel(flight.type);
+      showToast('', false);
+      if (!state.is3DMode) return; // 取得中に終了された
+    }
     const mKey = modelKeyOf(flight);
     const modelData = state.models.get(mKey);
     const noModelOverlay = document.getElementById('no-model-overlay');
 
     if (!modelData) {
       document.getElementById('no-model-msg').textContent =
-        `機種コード「${flight.type}」に対応する3Dデータ（${flight.type}.glb）が読み込まれていません。`;
+        `機種コード「${flight.type}」に対応する3Dデータ（${flight.type}.glb）がありません。管理者設定で3DモデルサーバーのURLを設定すると、サーバーから自動で読み込みます。`;
       noModelOverlay.classList.add('visible');
       return;
     }
@@ -3337,7 +3953,7 @@ function update3DScene() {
       if (otherIcao === state.selectedIcao) return;
       const otherKey = modelKeyOf(otherFlight);
       const otherModel = state.models.get(otherKey);
-      if (!otherModel) return;
+      if (!otherModel && !autoModelsEnabled()) return;
 
       const oi = getInterpolatedState(otherFlight, state.currentTime, nearbyTmp);
       if (!oi) return;
@@ -3346,6 +3962,10 @@ function update3DScene() {
       const dist = Math.hypot(oPos.x - pos.x, oPos.z - pos.z);
       if (dist > 50000) return;
 
+      if (!otherModel) {   // 近くに来た機種だけ、サーバーから取得（取得できるまでは表示しない）
+        ensureRemoteModel(otherFlight.type);
+        return;
+      }
       if (!otherModel.scene) {
         // 近くに来た機種のモデルだけ、その時に読み込む
         if (!otherModel.loading && !otherModel.failed) ensureModelLoaded(otherKey);
@@ -3623,23 +4243,25 @@ function updateSettingsModelList() {
   const current = sel.value;
   sel.innerHTML = '';
 
-  if (state.models.size === 0) {
+  const realKeys = [];
+  state.models.forEach((m, k) => { if (!m.procedural) realKeys.push(k); });
+  if (realKeys.length === 0) {
     const opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = '3Dモデル未読み込み';
+    opt.textContent = '3Dモデル未読み込み（機体を3D表示すると、ここに追加されます）';
     sel.appendChild(opt);
     return;
   }
 
-  state.models.forEach((_, typeCode) => {
+  realKeys.forEach((typeCode) => {
     const opt = document.createElement('option');
     opt.value = typeCode;
     const rs = getModelRealSize(typeCode);
-    opt.textContent = `${typeCode}.glb` + (rs.known ? ` (${rs.size}m)` : ' (実寸不明:仮35m)');
+    opt.textContent = `${typeCode}.glb` + (state.models.get(typeCode).auto ? '【サーバー】' : '') + (rs.known ? ` (${rs.size}m)` : ' (実寸不明:仮35m)');
     sel.appendChild(opt);
   });
 
-  if (current && state.models.has(current)) sel.value = current;
+  if (current && realKeys.includes(current)) sel.value = current;
 }
 
 function initPreview3D() {
