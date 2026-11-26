@@ -704,6 +704,16 @@
       </select>
     </div>
 
+    <div class="srv-box" style="display:none; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; margin-bottom:12px; text-align:left;">
+      <div style="font-size:12px; color:var(--accent-blue); font-weight:600; margin-bottom:8px;">☁️ サーバーのフライトデータ（フォルダ名で選択）</div>
+      <div style="display:flex; gap:8px;">
+        <select class="srv-folder-select" style="flex:1; min-width:0;"><option value="">フォルダを選択</option></select>
+        <button onclick="refreshServerFolders()" title="一覧を更新">🔄</button>
+      </div>
+      <button class="blue" style="width:100%; margin-top:8px;" onclick="loadServerFolder(this)">このフォルダを読み込む</button>
+      <div class="srv-folder-status" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
+    </div>
+
     <div class="file-btn-group">
       <button class="blue" onclick="document.getElementById('file-input-multi').click()">
         📄 ファイルを選ぶ（.gz / .json 複数選択可）
@@ -785,7 +795,7 @@
         <button style="flex:1;" onclick="adminSaveUrl(true)">URLを消去</button>
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
-        <input type="text" id="adm-test-code" value="B789" style="width:90px;" maxlength="4" autocapitalize="characters">
+        <input type="text" id="adm-test-code" value="B789" placeholder="ANA_B788" style="width:110px;" maxlength="8" autocapitalize="characters">
         <button style="flex:1;" onclick="adminTestUrl()">接続テスト（この機種を確認）</button>
       </div>
       <details>
@@ -1048,8 +1058,18 @@
   <div class="settings-section">
     <h3>追加のファイル読み込み</h3>
     <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
-      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json を追加でインポートできます。
+      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json を追加でインポートできます。サーバー設定済みなら、フォルダ名を選んで読み込めます。
     </p>
+    <div class="srv-box" style="display:none; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; margin-bottom:12px; text-align:left;">
+      <div style="font-size:12px; color:var(--accent-blue); font-weight:600; margin-bottom:8px;">☁️ サーバーのフライトデータ（フォルダ名で選択）</div>
+      <div style="display:flex; gap:8px;">
+        <select class="srv-folder-select" style="flex:1; min-width:0;"><option value="">フォルダを選択</option></select>
+        <button onclick="refreshServerFolders()" title="一覧を更新">🔄</button>
+      </div>
+      <button class="blue" style="width:100%; margin-top:8px;" onclick="loadServerFolder(this)">このフォルダを読み込む</button>
+      <div class="srv-folder-status" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
+    </div>
+
     <div class="setting-row">
       <span style="font-size:12px;">データ間引き（これから読む分に適用）</span>
       <select id="thin-select-settings" onchange="onThinChange(this.value)">
@@ -1237,6 +1257,7 @@ function loadSavedSettings() {
   updateSoundButton();
   document.getElementById('set-quality').value = state.quality;
   updateAdminStatus();
+  if (remoteBase) refreshServerFolders();
 }
 function saveSetting(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function changeBaseMap() {
@@ -1361,6 +1382,7 @@ const REMOTE_BUF_MAX_BYTES = 150 * 1024 * 1024;  // ダウンロード済みGLB�
 const REMOTE_MAX_PARALLEL = 3;              // 同時ダウンロード数
 const REMOTE_RETRY_MS = 30000;              // 通信エラーで簡易モデルになった機種を、再取得してよくなるまでの時間
 const FETCHABLE_TYPE_RE = /^[A-Z0-9]{2,4}$/;
+const LIVERY_FETCH_RE = /^[A-Z0-9]{2,3}_[A-Z0-9]{2,4}$/;   // 塗装モデル: ANA_B788 など
 
 let remoteBase = DEFAULT_REMOTE_BASE;
 let remoteGen = 0;                          // URL変更のたびに増やす（古いURLの取得結果を捨てるため）
@@ -1369,6 +1391,8 @@ let remoteBufBytes = 0;
 const remotePending = new Map();            // 取得中の機種コード → Promise（同じ機種の二重取得を防ぐ）
 let remoteActive = 0;
 const remoteWaiters = [];
+const remoteMiss = new Map();               // 塗装モデルのキー → 再試行してよい時刻（Infinity = サーバーに無い）
+const remoteFlightPending = new Map();      // 機体ごとの取得処理（毎フレームの重複呼び出し防止）
 
 function autoModelsEnabled() { return !!remoteBase || PROCEDURAL_WITHOUT_SERVER; }
 function hasModelFor(f) { return state.models.has(modelKeyOf(f)) || autoModelsEnabled(); }
@@ -1455,7 +1479,7 @@ function putAutoModel(code, opts) {
   }
   const m = {
     source: proc ? null : { remote: true }, scene: null, loading: null, failed: false, lastUsed: 0,
-    rotX: 0, rotY: 0, rotZ: 0, scale: 1.0, key: code, base: null, touched: false,
+    rotX: 0, rotY: 0, rotZ: 0, scale: 1.0, key: code, base: (LIVERY_KEY_RE.exec(code) || [])[2] || null, touched: false,
     auto: true, procedural: proc, retryAt: opts.retryAt || 0
   };
   state.models.set(code, m);
@@ -1490,10 +1514,64 @@ function ensureRemoteModel(code, force) {
   return p;
 }
 
+// 塗装モデル（例: ANA_B788）。あれば優先、無ければ何も登録せず機種モデルへ（簡易モデルにはしない）
+function ensureLivery(lk) {
+  if (!remoteBase || !LIVERY_FETCH_RE.test(lk)) return Promise.resolve(false);
+  if (state.models.has(lk)) return Promise.resolve(true);
+  const until = remoteMiss.get(lk);
+  if (until !== undefined && Date.now() < until) return Promise.resolve(false);
+  if (remotePending.has(lk)) return remotePending.get(lk);
+  const gen = remoteGen;
+  const p = (async () => {
+    try {
+      await fetchRemoteBuffer(lk);
+      if (gen !== remoteGen) return false;
+      putAutoModel(lk, { procedural: false });
+      return true;
+    } catch (e) {
+      if (gen !== remoteGen) return false;
+      const missing = e && (e.status === 404 || e.status === 410);
+      remoteMiss.set(lk, missing ? Infinity : Date.now() + REMOTE_RETRY_MS);
+      return false;
+    }
+  })();
+  remotePending.set(lk, p);
+  p.finally(() => { if (remotePending.get(lk) === p) remotePending.delete(lk); });
+  return p;
+}
+
+// 機種モデルが既にある機体でも、塗装モデルがサーバーにあれば後から切り替える（周辺機用・毎フレーム呼んでも軽い）
+function wantLivery(f) {
+  if (!remoteBase || !f.airline) return;
+  const lk = f.airline + '_' + f.type;
+  if (state.models.has(lk) || remotePending.has(lk)) return;
+  const until = remoteMiss.get(lk);
+  if (until !== undefined && Date.now() < until) return;
+  ensureLivery(lk);
+}
+
+// その機体のモデルを用意する: 塗装モデル(航空会社コード_機種コード) → 機種モデル → 簡易モデル
+function ensureRemoteForFlight(f) {
+  if (!f || !autoModelsEnabled()) return Promise.resolve(false);
+  const tag = f.icao;
+  if (remoteFlightPending.has(tag)) return remoteFlightPending.get(tag);
+  const gen = remoteGen;
+  const p = (async () => {
+    if (remoteBase && f.airline) {
+      const lk = f.airline + '_' + f.type;
+      if (state.models.has(lk) || await ensureLivery(lk)) return true;
+    }
+    return ensureRemoteModel(f.type);
+  })();
+  remoteFlightPending.set(tag, p);
+  p.finally(() => { if (gen === remoteGen && remoteFlightPending.get(tag) === p) remoteFlightPending.delete(tag); });
+  return p;
+}
+
 // URLを変えた時：自動取得したモデルとキャッシュを全部捨てる（ローカル読込のモデルは残す）
 function resetRemoteModels() {
   remoteGen++;
-  remotePending.clear();
+  remotePending.clear(); remoteMiss.clear(); remoteFlightPending.clear();
   remoteBufCache.clear(); remoteBufBytes = 0;
   const del = [];
   state.models.forEach((m, k) => { if (m.auto) del.push(k); });
@@ -1616,6 +1694,143 @@ function buildProceduralModel(typeCode) {
     add(new THREE.CylinderGeometry(R * 1.2, R * 1.2, 0.04, 24).rotateX(Math.PI / 2), disc, 0, 0, -0.5 * Lf - 0.05);
   }
   return root;
+}
+
+// ================= サーバーのフライトデータ（フォルダ名で選択） =================
+// 取得方法（上から順に試す）:
+//  1) ベースURL/manifest.json … {"フォルダ名": ["a.json.gz", ...], ...} か {"folders": {...}}、または ["フォルダ名/a.json.gz", ...] の配列
+//  2) ディレクトリ一覧ページ（python -m http.server / nginx autoindex 等）のリンクをフォルダ・ファイルとして使う
+const DATA_FILE_RE = /\.(json|gz)$/i;
+let serverFolders = null;   // Map: フォルダ名 → ファイル名の配列（一覧ページ方式は選択時に取得するので null）
+let serverLoading = false;
+
+function encPath(p) { return p.split('/').map(encodeURIComponent).join('/'); }
+
+async function listDirNames(url) {
+  const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+  const out = [];
+  doc.querySelectorAll('a[href]').forEach((a) => {
+    let h = (a.getAttribute('href') || '').trim();
+    if (!h || h[0] === '?' || h[0] === '#' || h[0] === '/' || /^[a-z][a-z0-9+.-]*:/i.test(h) || h.startsWith('..')) return;
+    h = h.replace(/^\.\//, '');
+    try { h = decodeURIComponent(h); } catch (e) {}
+    if (h && h.indexOf('/') === h.length - 1 || (h && h.indexOf('/') < 0)) out.push(h);
+  });
+  return out;
+}
+
+async function fetchServerIndex() {
+  if (!remoteBase) throw new Error('no base url');
+  try {
+    const r = await fetch(`${remoteBase}/manifest.json`, { mode: 'cors', cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      const folders = new Map();
+      const add = (folder, file) => {
+        if (!folder || !DATA_FILE_RE.test(file)) return;
+        if (!folders.has(folder)) folders.set(folder, []);
+        folders.get(folder).push(file);
+      };
+      if (Array.isArray(j)) {
+        j.forEach((p) => {
+          p = String(p).replace(/^\.?\//, '');
+          const i = p.indexOf('/');
+          if (i > 0) add(p.slice(0, i), p.slice(i + 1));
+        });
+      } else if (j && typeof j === 'object') {
+        const src = (j.folders && typeof j.folders === 'object') ? j.folders : j;
+        Object.keys(src).forEach((k) => { if (Array.isArray(src[k])) src[k].forEach((f) => add(k, String(f))); });
+      }
+      if (folders.size) return folders;
+    }
+  } catch (e) { /* manifest が無い・読めない → 一覧ページを試す */ }
+  const names = await listDirNames(`${remoteBase}/`);
+  const folders = new Map();
+  names.filter((n) => n.endsWith('/')).forEach((n) => folders.set(n.slice(0, -1), null));
+  return folders;
+}
+
+async function getFolderFiles(folder) {
+  const known = serverFolders && serverFolders.get(folder);
+  if (known) return known.slice().sort();
+  const names = await listDirNames(`${remoteBase}/${encPath(folder)}/`);
+  return names.filter((n) => DATA_FILE_RE.test(n)).sort();
+}
+
+function setServerStatus(text) {
+  document.querySelectorAll('.srv-folder-status').forEach((el) => { el.textContent = text || ''; });
+}
+
+async function refreshServerFolders() {
+  const sels = document.querySelectorAll('.srv-folder-select');
+  const fill = (names) => {
+    sels.forEach((sel) => {
+      const cur = sel.value;
+      sel.innerHTML = '';
+      const o0 = document.createElement('option');
+      o0.value = ''; o0.textContent = names.length ? 'フォルダを選択' : '（フォルダなし）';
+      sel.appendChild(o0);
+      names.forEach((n) => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
+      if (cur && names.includes(cur)) sel.value = cur;
+    });
+  };
+  if (!remoteBase) { serverFolders = null; fill([]); setServerStatus(''); return; }
+  setServerStatus('フォルダ一覧を取得中...');
+  try {
+    serverFolders = await fetchServerIndex();
+    const names = Array.from(serverFolders.keys()).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    fill(names);
+    setServerStatus(names.length ? `${names.length} 個のフォルダ` : 'フォルダが見つかりません（manifest.json か、ディレクトリ一覧を公開してください）');
+  } catch (e) {
+    serverFolders = null; fill([]);
+    setServerStatus('一覧を取得できません（URL・トンネル・CORS・ディレクトリ一覧の公開を確認）');
+  }
+}
+
+async function loadServerFolder(btn) {
+  const box = btn.closest('.srv-box');
+  const folder = box ? box.querySelector('.srv-folder-select').value : '';
+  if (!folder || serverLoading || !remoteBase) return;
+  serverLoading = true;
+  try {
+    showToast('ファイル一覧を取得中...');
+    const files = await getFolderFiles(folder);
+    if (!files.length) {
+      showToast('このフォルダにデータ（.json / .gz）がありません');
+      setTimeout(() => showToast('', false), 2500);
+      return;
+    }
+    const fetchBuf = async (f) => {
+      try {
+        const r = await fetch(`${remoteBase}/${encPath(folder)}/${encPath(f)}`, { mode: 'cors' });
+        return r.ok ? await r.arrayBuffer() : null;
+      } catch (e) { return null; }
+    };
+    // 4件先まで並行して取得しつつ、ファイル名順に処理する
+    const queue = []; let nextIdx = 0, done = 0, fail = 0;
+    const pump = () => { while (queue.length < 4 && nextIdx < files.length) { const f = files[nextIdx++]; queue.push({ f, p: fetchBuf(f) }); } };
+    pump();
+    while (queue.length) {
+      const { f, p } = queue.shift();
+      pump();
+      let buf = await p;
+      if (buf) await processImportedBuffer(f.split('/').pop(), buf); else fail++;
+      buf = null;
+      done++;
+      showToast(`サーバーから読み込み中... ${done}/${files.length}`);
+      if (done % 20 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+    finalizeImportedData();
+    showToast(`「${folder}」: ${done - fail} 件読み込み` + (fail ? `（${fail} 件失敗）` : ''));
+    setTimeout(() => showToast('', false), 3000);
+  } catch (e) {
+    showToast('読み込みに失敗しました（一覧を取得できません）');
+    setTimeout(() => showToast('', false), 3000);
+  } finally {
+    serverLoading = false;
+  }
 }
 
 // ================= 管理者専用設定（サーバーURLの設定・パスワード保護） =================
@@ -1798,6 +2013,7 @@ function adminSaveUrl(clear) {
   if (changed) resetRemoteModels();
   admEl('adm-url').value = n;
   updateAdminStatus();
+  refreshServerFolders();
   adminMsg(n ? '保存しました' : 'URLを空にしました（サーバー読み込みなし）', true);
 }
 
@@ -1833,6 +2049,7 @@ function updateAdminStatus() {
   document.querySelectorAll('.admin-status').forEach((el) => {
     el.textContent = remoteBase ? '🟢 3Dモデルサーバー: 設定済み' : '⚪ 3Dモデルサーバー: 未設定';
   });
+  document.querySelectorAll('.srv-box').forEach((b) => { b.style.display = remoteBase ? 'block' : 'none'; });
 }
 
 // 塗装モデルのファイル名: 「航空会社コード_機種コード.glb」（例: CCA_B744.glb → Air China の 747-400）
@@ -3540,7 +3757,7 @@ async function enter3DView() {
 
     if (autoModelsEnabled()) {
       showToast('サーバーから3Dモデルを取得中...');
-      await ensureRemoteModel(flight.type);
+      await ensureRemoteForFlight(flight);
       showToast('', false);
       if (!state.is3DMode) return; // 取得中に終了された
     }
@@ -3963,9 +4180,10 @@ function update3DScene() {
       if (dist > 50000) return;
 
       if (!otherModel) {   // 近くに来た機種だけ、サーバーから取得（取得できるまでは表示しない）
-        ensureRemoteModel(otherFlight.type);
+        ensureRemoteForFlight(otherFlight);
         return;
       }
+      if (otherModel.auto) wantLivery(otherFlight);
       if (!otherModel.scene) {
         // 近くに来た機種のモデルだけ、その時に読み込む
         if (!otherModel.loading && !otherModel.failed) ensureModelLoaded(otherKey);
