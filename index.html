@@ -906,7 +906,7 @@
       <input type="checkbox" id="set-near-labels" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="setNearLabels(this.checked)">
     </div>
     <div class="setting-row">
-      <span>モデルのポリゴン数（端末に合わせて選択）<br><span style="font-size:10px; color:var(--text-muted);">多すぎるモデルは自動で削減し、遠くの機体ほど簡略モデルで表示します。変更するとモデルを再構築します（「無効」は削減・遠距離簡略化なし。ただし極端に重いモデルのみ安全のため削減）</span></span>
+      <span>モデルの軽量化レベル（端末に合わせて選択）<br><span style="font-size:10px; color:var(--text-muted);">ポリゴン数・テクスチャ解像度・細かい部品を自動で削減し、遠くの機体ほど簡略モデルで表示します。変更するとモデルを再構築します（「無効」は削減なし。ただし極端に重いモデルのみ安全のため制限）</span></span>
       <select id="set-quality" onchange="onQualityChange(this.value)">
         <option value="ultralow">超軽量</option>
         <option value="low">軽量</option>
@@ -1034,6 +1034,7 @@ const state = {
   nearLabels: true,   // 3D表示の周辺機ラベル
   volume: 0.6,
   quality: 'standard',
+  modelsVer: 0,
   frameDt: 0.016
 };
 
@@ -1064,15 +1065,15 @@ const GROUND_URLS = {
   sat: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
 };
 const MAX_LOADED_MODELS = 6;     // 同時にメモリへ展開しておく3Dモデル数の上限
-const MODEL_TEXTURE_MAX = 1024;  // 3Dモデルのテクスチャ最大解像度(px)
 // ポリゴン数プリセット: cap = 1機種あたりの最大三角形数（近距離/選択機）。lod = 遠距離で簡略モデルに切り替えるか
 const QUALITY_PRESETS = {
-  ultralow: { cap: 6000,   lod: true },
-  low:      { cap: 15000,  lod: true },
-  standard: { cap: 40000,  lod: true },
-  high:     { cap: 100000, lod: true },
-  max:      { cap: 250000, lod: true },
-  off:      { cap: 600000, lod: false }   // 無効: 削減しない（動作に影響する極端なモデルのみ安全のため削減）
+  //            cap:三角形数  tex:テクスチャ最大px  partMin:これより小さい部品は削除(機体全長比)  dropMaps:捨てるマップ  lod:遠距離で簡略化
+  ultralow: { cap: 6000,   tex: 256,  partMin: 0.010,  dropMaps: ['normalMap', 'aoMap', 'bumpMap', 'emissiveMap'], lod: true },
+  low:      { cap: 15000,  tex: 512,  partMin: 0.006,  dropMaps: ['normalMap', 'aoMap', 'bumpMap'], lod: true },
+  standard: { cap: 40000,  tex: 1024, partMin: 0.003,  dropMaps: [], lod: true },
+  high:     { cap: 100000, tex: 2048, partMin: 0.0015, dropMaps: [], lod: true },
+  max:      { cap: 250000, tex: 4096, partMin: 0,      dropMaps: [], lod: true },
+  off:      { cap: 600000, tex: 4096, partMin: 0,      dropMaps: [], lod: false, keepAll: true }   // 無効: 削減しない（極端に重いものだけ安全のため制限）
 };
 const LOD_RATIOS = [0.3, 0.1];       // 遠距離用の簡略モデルの三角形数（近距離用に対する比率）
 const LOD_DIST_K = [30, 120];        // 機体サイズの何倍離れたら切り替えるか
@@ -1103,7 +1104,7 @@ const REAL_SIZE_M = {
   F16:15.0, F15:19.4, F18:17.1, F18H:17.1, F18S:18.3, F35:15.7, F22:18.9, T38:14.1, P3:35.6, KC10:55.5, K767:50.5
 };
 function getModelRealSize(typeCode) {
-  const v = REAL_SIZE_M[String(typeCode || '').toUpperCase()];
+  const v = REAL_SIZE_M[String(typeCode || '').toUpperCase().split('_').pop()];
   return v ? { size: v, known: true } : { size: DEFAULT_MODEL_SIZE_M, known: false };
 }
 const LABEL_MAX = 250;           // 地図上のラベルを描く機体数の上限（超えると選択機のみ）
@@ -1248,8 +1249,13 @@ async function processImportedBuffer(filename, arrayBuffer) {
   } catch (err) {}
 }
 
+// 塗装モデルのファイル名: 「航空会社コード_機種コード.glb」（例: CCA_B744.glb → Air China の 747-400）
+const LIVERY_KEY_RE = /^([A-Z0-9]{2,3})_([A-Z0-9]{2,4})$/;
+
 function registerModelSource(filename, source) {
   const typeCode = filename.replace(/\.glb$/i, '').toUpperCase().trim();
+  state.modelsVer++;
+  const lm = LIVERY_KEY_RE.exec(typeCode);
   const prev = state.models.get(typeCode);
   if (prev) {
     disposeModelScene(prev);
@@ -1258,9 +1264,39 @@ function registerModelSource(filename, source) {
   } else {
     state.models.set(typeCode, {
       source, scene: null, loading: null, failed: false, lastUsed: 0,
-      rotX: 0, rotY: 0, rotZ: 0, scale: 1.0
+      rotX: 0, rotY: 0, rotZ: 0, scale: 1.0,
+      key: typeCode, base: lm ? lm[2] : null, touched: false
     });
   }
+}
+
+// その機体が使う3Dモデルのキー。塗装モデル(例 CCA_B744)があればそれを、無ければ機種コード(B744)のモデルを使う
+function modelKeyOf(f) {
+  if (f._mkVer === state.modelsVer) return f._mk;
+  let k = f.type;
+  if (f.airline) {
+    const lk = f.airline + '_' + f.type;
+    if (state.models.has(lk)) k = lk;
+  }
+  f._mk = k; f._mkVer = state.modelsVer;
+  return k;
+}
+
+// 塗装モデルは、自分で向き・拡大率を調整するまでは元の機種モデルの設定を引き継ぐ
+function modelXform(m) {
+  if (m && m.base && !m.touched) {
+    const b = state.models.get(m.base);
+    if (b) return b;
+  }
+  return m;
+}
+function ownXform(m) {
+  if (m.base && !m.touched) {
+    const b = state.models.get(m.base);
+    if (b) { m.rotX = b.rotX; m.rotY = b.rotY; m.rotZ = b.rotZ; m.scale = b.scale; }
+    m.touched = true;
+  }
+  return m;
 }
 
 // ---- ポリゴン削減（頂点クラスタリング方式: 高速で、UVの継ぎ目も崩れにくい） ----
@@ -1404,6 +1440,141 @@ async function buildReducedGeometries(srcGeos, canSimp, ratio) {
   return out;
 }
 
+// 室内パーツなど外から見えない部品の名前
+const INTERIOR_NAME_RE = /(seat|interior|galley|lavator|overhead|passenger|cabin[_\s-]*(int|floor|wall)|cockpit[_\s-]*(int|seat|panel|console)|bin[_\s-]*lid)/i;
+
+function meshHiddenInChain(o) {
+  for (let p = o; p; p = p.parent) if (p.visible === false) return true;
+  return false;
+}
+
+// 見えない部品・室内・極端に小さい部品を削除して、描画負荷（ポリゴン・描画回数）を減らす
+function cullModelParts(root, preset) {
+  root.updateMatrixWorld(true);
+  const meshes = collectMeshes(root);
+  if (!meshes.length) return;
+  const boxes = meshes.map((m) => new THREE.Box3().setFromObject(m));
+  const all = new THREE.Box3();
+  boxes.forEach((b) => { if (!b.isEmpty()) all.union(b); });
+  const diag = all.getSize(new THREE.Vector3()).length() || 1;
+  const sz = new THREE.Vector3();
+  const remove = [];
+  meshes.forEach((m, i) => {
+    let rm = meshHiddenInChain(m);
+    if (!rm && !preset.keepAll) {
+      const nm = (m.name || '') + ' ' + (m.parent && m.parent.name || '');
+      if (INTERIOR_NAME_RE.test(nm)) rm = true;
+      else if (preset.partMin > 0 && !m.isSkinnedMesh && !boxes[i].isEmpty()) {
+        if (boxes[i].getSize(sz).length() < diag * preset.partMin) rm = true;
+      }
+    }
+    if (rm) remove.push(m);
+  });
+  if (remove.length >= meshes.length) return;   // 全部消えるなら何もしない
+  for (const m of remove) {
+    if (m.parent) m.parent.remove(m);
+    if (m.geometry) m.geometry.dispose();
+  }
+}
+
+const MERGE_ATTRS = ['position', 'normal', 'uv', 'uv2', 'color'];
+
+// 同じマテリアルのメッシュを1つに結合（描画回数 = マテリアル数 まで減らす）
+function mergeMeshesByMaterial(root) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const groups = new Map();
+  collectMeshes(root).forEach((m) => {
+    if (!canSimplifyMesh(m) || Array.isArray(m.material)) return;
+    const g = m.geometry;
+    const names = MERGE_ATTRS.filter((n) => g.attributes[n]);
+    if (!names.includes('position')) return;
+    const sig = names.map((n) => n + g.attributes[n].itemSize).join(',');
+    const key = m.material.uuid + '|' + sig + '|' + (m.renderOrder || 0);
+    let grp = groups.get(key);
+    if (!grp) { grp = { names, meshes: [], mat: m.material, ro: m.renderOrder || 0 }; groups.set(key, grp); }
+    grp.meshes.push(m);
+  });
+
+  const v = new THREE.Vector3();
+  groups.forEach((grp) => {
+    if (grp.meshes.length < 2) return;
+    let totalV = 0, totalI = 0;
+    for (const m of grp.meshes) {
+      const g = m.geometry;
+      totalV += g.attributes.position.count;
+      totalI += g.index ? g.index.count : g.attributes.position.count;
+    }
+    const arrs = {};
+    grp.names.forEach((n) => { arrs[n] = new Float32Array(totalV * grp.meshes[0].geometry.attributes[n].itemSize); });
+    const idx = new Uint32Array(totalI);
+    let vo = 0, io = 0;
+    for (const m of grp.meshes) {
+      const g = m.geometry;
+      const rel = new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld);
+      const nm = new THREE.Matrix3().getNormalMatrix(rel);
+      const flip = rel.determinant() < 0;
+      const cnt = g.attributes.position.count;
+      for (const n of grp.names) {
+        const a = g.attributes[n], sz = a.itemSize, out = arrs[n];
+        for (let i = 0; i < cnt; i++) {
+          const o = (vo + i) * sz;
+          if (n === 'position') {
+            v.set(a.getX(i), a.getY(i), a.getZ(i)).applyMatrix4(rel);
+            out[o] = v.x; out[o + 1] = v.y; out[o + 2] = v.z;
+          } else if (n === 'normal') {
+            v.set(a.getX(i), a.getY(i), a.getZ(i)).applyMatrix3(nm).normalize();
+            out[o] = v.x; out[o + 1] = v.y; out[o + 2] = v.z;
+          } else {
+            out[o] = a.getX(i);
+            if (sz > 1) out[o + 1] = a.getY(i);
+            if (sz > 2) out[o + 2] = a.getZ(i);
+            if (sz > 3) out[o + 3] = a.getW(i);
+          }
+        }
+      }
+      const ic = g.index ? g.index.count : cnt;
+      for (let t = 0; t < ic; t += 3) {
+        const i0 = g.index ? g.index.getX(t) : t;
+        const i1 = g.index ? g.index.getX(t + 1) : t + 1;
+        const i2 = g.index ? g.index.getX(t + 2) : t + 2;
+        idx[io++] = vo + i0;
+        idx[io++] = vo + (flip ? i2 : i1);
+        idx[io++] = vo + (flip ? i1 : i2);
+      }
+      vo += cnt;
+    }
+    const mg = new THREE.BufferGeometry();
+    grp.names.forEach((n) => mg.setAttribute(n, new THREE.BufferAttribute(arrs[n], grp.meshes[0].geometry.attributes[n].itemSize)));
+    mg.setIndex(new THREE.BufferAttribute(totalV > 65535 ? idx : new Uint16Array(idx), 1));
+    mg.computeBoundingBox();
+    mg.computeBoundingSphere();
+    const merged = new THREE.Mesh(mg, grp.mat);
+    merged.name = 'merged';
+    merged.renderOrder = grp.ro;
+    root.add(merged);
+    for (const m of grp.meshes) {
+      if (m.parent) m.parent.remove(m);
+      m.geometry.dispose();
+    }
+  });
+}
+
+// 設定によっては使わないマップ（法線・AO等）を捨てて、テクスチャのメモリと読み込みを減らす
+function stripMaterialMaps(root, dropMaps) {
+  if (!dropMaps || !dropMaps.length) return;
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      let changed = false;
+      for (const k of dropMaps) if (mat[k]) { mat[k].dispose(); mat[k] = null; changed = true; }
+      if (changed) mat.needsUpdate = true;
+    }
+  });
+}
+
 function downscaleModelTextures(root, maxSize) {
   // 同じ画像を複数のテクスチャが共有している場合があるので、「画像 → 縮小後canvas」で管理する。
   // （以前はテクスチャ単位で処理して元画像を close していたため、共有していた別テクスチャが
@@ -1484,7 +1655,15 @@ function makeEnvTexture(renderer) {
 }
 
 async function buildModelWrapper(gltf, typeCode) {
-  downscaleModelTextures(gltf.scene, MODEL_TEXTURE_MAX);
+  const preset = QUALITY_PRESETS[state.quality] || QUALITY_PRESETS.standard;
+  // 不要な部品の削除 → マテリアル単位で結合 → 不要マップ破棄 → テクスチャ縮小（読み込み処理の間にUIへ制御を返す）
+  cullModelParts(gltf.scene, preset);
+  await yieldToUI();
+  mergeMeshesByMaterial(gltf.scene);
+  await yieldToUI();
+  stripMaterialMaps(gltf.scene, preset.dropMaps);
+  downscaleModelTextures(gltf.scene, preset.tex);
+  await yieldToUI();
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -1509,7 +1688,6 @@ async function buildModelWrapper(gltf, typeCode) {
   wrapper.add(gltf.scene);
 
   // ---- ポリゴン削減とLOD（遠距離用の簡略モデル）の生成 ----
-  const preset = QUALITY_PRESETS[state.quality] || QUALITY_PRESETS.standard;
   const meshes = collectMeshes(wrapper);
   const canSimp = meshes.map(canSimplifyMesh);
   let total = 0;
@@ -1580,7 +1758,7 @@ async function onQualityChange(v) {
     const f = state.flights.get(state.selectedIcao);
     if (f) {
       showToast('3Dモデルを再構築中...');
-      await ensureModelLoaded(f.type);
+      await ensureModelLoaded(modelKeyOf(f));
       showToast('', false);
       if (state.is3DMode) rebuild3DModels();
     }
@@ -1596,7 +1774,7 @@ function evictModels(keepType) {
   const inUse = new Set([keepType]);
   if (state.is3DMode && state.selectedIcao) {
     const sf = state.flights.get(state.selectedIcao);
-    if (sf) inUse.add(sf.type);
+    if (sf) inUse.add(modelKeyOf(sf));
   }
   nearbyCache.forEach((c) => { if (c.userData && c.userData.modelType) inUse.add(c.userData.modelType); });
   const pv = document.getElementById('set-model-select');
@@ -1897,6 +2075,16 @@ function finalizeImportedData() {
       if (c && !seen.has(c)) { seen.add(c); parts.push(CS_POOL[c].toLowerCase()); }
     }
     flight.callsignText = parts.join(' ');
+    {
+      const tally = {};
+      let bestAl = '', bestN = 0;
+      seen.forEach((c) => {
+        const mm = /^([A-Z]{3})\d/.exec(CS_POOL[c].toUpperCase());
+        if (mm) { tally[mm[1]] = (tally[mm[1]] || 0) + 1; if (tally[mm[1]] > bestN) { bestN = tally[mm[1]]; bestAl = mm[1]; } }
+      });
+      flight.airline = bestAl;
+      flight._mkVer = -1;
+    }
     const minT = flight.t[0];
     const maxT = flight.t[flight.n - 1];
     if (minT < state.globalMinTime) state.globalMinTime = minT;
@@ -2018,7 +2206,7 @@ function drawModelFlightTimeline() {
 
     c.fillStyle = 'rgba(245, 158, 11, 0.72)';
     state.flights.forEach((flight) => {
-      if (!flight.n || !state.models.has(flight.type)) return;
+      if (!flight.n || !state.models.has(modelKeyOf(flight))) return;
       has3DFlightCount++;
       const T = flight.t;
       const n = flight.n;
@@ -2222,7 +2410,7 @@ function showInspectorDetail(icao) {
   document.getElementById('insp-alt-spd').textContent =
     `${isGround ? 'GND' : f.alt[li].toLocaleString() + ' ft'} / ${f.spd[li]} kt`;
   document.getElementById('insp-pos').textContent = `${(f.lat[li] / 1e6).toFixed(3)}, ${(f.lon[li] / 1e6).toFixed(3)}`;
-  document.getElementById('insp-model').textContent = state.models.has(f.type) ? `あり (${f.type}.glb)` : 'なし';
+  document.getElementById('insp-model').textContent = state.models.has(modelKeyOf(f)) ? `あり (${modelKeyOf(f)}.glb)` : 'なし';
 }
 
 function jumpToRadarWithSelected() {
@@ -2740,7 +2928,8 @@ async function enter3DView() {
     state.sceneReady = false;
     document.getElementById('view3d-screen').classList.add('active');
 
-    const modelData = state.models.get(flight.type);
+    const mKey = modelKeyOf(flight);
+    const modelData = state.models.get(mKey);
     const noModelOverlay = document.getElementById('no-model-overlay');
 
     if (!modelData) {
@@ -2752,13 +2941,13 @@ async function enter3DView() {
     noModelOverlay.classList.remove('visible');
 
     showToast('3Dモデルを読み込み中...');
-    const ok = await ensureModelLoaded(flight.type);
+    const ok = await ensureModelLoaded(mKey);
     showToast('', false);
     if (!state.is3DMode) return; // 読み込み中に終了された
 
     if (!ok) {
       document.getElementById('no-model-msg').textContent =
-        `「${flight.type}.glb」を読み込めませんでした（ファイル破損、またはメモリ不足の可能性があります）。`;
+        `「${mKey}.glb」を読み込めませんでした（ファイル破損、またはメモリ不足の可能性があります）。`;
       noModelOverlay.classList.add('visible');
       return;
     }
@@ -2825,7 +3014,8 @@ function cloneConfiguredModel(modelData) {
   if (!modelData || !modelData.scene) return container;
   const flip = new THREE.Group();
   flip.rotation.y = THREE.MathUtils.degToRad(state.modelYaw);
-  const sizeM = (modelData.scene.userData.realSize || DEFAULT_MODEL_SIZE_M) * modelData.scale;
+  const xf = modelXform(modelData);
+  const sizeM = (modelData.scene.userData.realSize || DEFAULT_MODEL_SIZE_M) * xf.scale;
   let mesh;
   const vars = modelData.variants;
   if (vars && vars.length > 1) {
@@ -2836,16 +3026,16 @@ function cloneConfiguredModel(modelData) {
     mesh = modelData.scene.clone();
   }
   mesh.rotation.set(
-    THREE.MathUtils.degToRad(modelData.rotX),
-    THREE.MathUtils.degToRad(modelData.rotY),
-    THREE.MathUtils.degToRad(modelData.rotZ)
+    THREE.MathUtils.degToRad(xf.rotX),
+    THREE.MathUtils.degToRad(xf.rotY),
+    THREE.MathUtils.degToRad(xf.rotZ)
   );
-  mesh.scale.setScalar(modelData.scale);
+  mesh.scale.setScalar(xf.scale);
   flip.add(mesh);
   container.add(flip);
 
   // 機体の最下点が高さ0(地面)になるよう、モデル中心から底面までの距離を求める（設定が同じ間はキャッシュ）
-  const key = `${modelData.rotX},${modelData.rotY},${modelData.rotZ},${modelData.scale},${state.modelYaw}`;
+  const key = `${xf.rotX},${xf.rotY},${xf.rotZ},${xf.scale},${state.modelYaw}`;
   if (modelData._liftKey !== key) {
     container.updateMatrixWorld(true);
     const bb = new THREE.Box3().setFromObject(container);
@@ -2896,7 +3086,7 @@ function rebuild3DModels() {
   }
   if (state.sceneReady && state.selectedIcao && mainPlaneGroup) {
     const f = state.flights.get(state.selectedIcao);
-    const md = f && state.models.get(f.type);
+    const md = f && state.models.get(modelKeyOf(f));
     while (mainPlaneGroup.children.length > 0) mainPlaneGroup.remove(mainPlaneGroup.children[0]);
     mainModelContainer = cloneConfiguredModel(md);
     mainPlaneGroup.add(mainModelContainer);
@@ -3117,7 +3307,7 @@ function updateGroundMapTiles(centerLat, centerLon) {
 function update3DScene() {
   if (!state.is3DMode || !state.sceneReady || !renderer3d || !state.selectedIcao) return;
   const flight = state.flights.get(state.selectedIcao);
-  if (!flight || !state.models.has(flight.type)) return;
+  if (!flight || !state.models.has(modelKeyOf(flight))) return;
 
   const dt = state.frameDt;
   const interp = getInterpolatedState(flight, state.currentTime, mainInterp);
@@ -3145,7 +3335,8 @@ function update3DScene() {
     const seen = new Set();
     state.flights.forEach((otherFlight, otherIcao) => {
       if (otherIcao === state.selectedIcao) return;
-      const otherModel = state.models.get(otherFlight.type);
+      const otherKey = modelKeyOf(otherFlight);
+      const otherModel = state.models.get(otherKey);
       if (!otherModel) return;
 
       const oi = getInterpolatedState(otherFlight, state.currentTime, nearbyTmp);
@@ -3157,7 +3348,7 @@ function update3DScene() {
 
       if (!otherModel.scene) {
         // 近くに来た機種のモデルだけ、その時に読み込む
-        if (!otherModel.loading && !otherModel.failed) ensureModelLoaded(otherFlight.type);
+        if (!otherModel.loading && !otherModel.failed) ensureModelLoaded(otherKey);
         return;
       }
       otherModel.lastUsed = performance.now();
@@ -3165,9 +3356,14 @@ function update3DScene() {
       nearbyCount++;
       seen.add(otherIcao);
       let clone = nearbyCache.get(otherIcao);
+      if (clone && clone.userData.modelType !== otherKey) {   // 塗装モデルが後から追加された場合など
+        nearbyPlanesGroup.remove(clone);
+        nearbyCache.delete(otherIcao);
+        clone = null;
+      }
       if (!clone) {
         clone = cloneConfiguredModel(otherModel);
-        clone.userData.modelType = otherFlight.type;
+        clone.userData.modelType = otherKey;
         nearbyCache.set(otherIcao, clone);
         nearbyPlanesGroup.add(clone);
       }
@@ -3507,8 +3703,9 @@ async function selectPreviewModel() {
   const data = state.models.get(typeCode);
   if (!data) return;
 
-  document.getElementById('set-model-scale').value = data.scale;
-  document.getElementById('set-scale-val').textContent = `${data.scale.toFixed(1)}x`;
+  const pxf = modelXform(data);
+  document.getElementById('set-model-scale').value = pxf.scale;
+  document.getElementById('set-scale-val').textContent = `${pxf.scale.toFixed(1)}x`;
 
   const token = ++previewToken;
   if (!data.scene) showToast('3Dモデルを読み込み中...');
@@ -3532,6 +3729,7 @@ function rotatePreviewModel(axis, deg) {
   const data = state.models.get(typeCode);
   if (!data) return;
 
+  ownXform(data);
   if (axis === 'x') data.rotX = (data.rotX + deg) % 360;
   if (axis === 'y') data.rotY = (data.rotY + deg) % 360;
   if (axis === 'z') data.rotZ = (data.rotZ + deg) % 360;
@@ -3543,6 +3741,7 @@ function scalePreviewModel(val) {
   const data = state.models.get(typeCode);
   if (!data) return;
 
+  ownXform(data);
   data.scale = parseFloat(val);
   document.getElementById('set-scale-val').textContent = `${data.scale.toFixed(1)}x`;
   selectPreviewModel();
@@ -3553,6 +3752,7 @@ function resetPreviewTransform() {
   const data = state.models.get(typeCode);
   if (!data) return;
 
+  ownXform(data);
   data.rotX = 0;
   data.rotY = 0;
   data.rotZ = 0;
