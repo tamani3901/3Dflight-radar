@@ -920,6 +920,16 @@
       <span>遠くのモデルのポリゴン削減（LOD）<br><span style="font-size:10px; color:var(--text-muted);">遠くの機体を簡略モデルに切り替えます。初期はオフ（簡略モデルを作る処理とメモリが増えるため）。変更するとモデルを再構築します</span></span>
       <input type="checkbox" id="set-far-lod" style="width:20px; height:20px; accent-color:var(--accent);" onchange="onFarLodChange(this.checked)">
     </div>
+    <div class="setting-row">
+      <span>周辺機の同時表示数<br><span style="font-size:10px; color:var(--text-muted);">3D表示で、半径10km以内の機体を近い順にここまで表示します。機体が多い場所で重い・落ちる時は減らしてください</span></span>
+      <select id="set-near-limit" onchange="onNearLimitChange(this.value)">
+        <option value="none">超軽量（なし）</option>
+        <option value="4">軽量（4機）</option>
+        <option value="8">標準（8機）</option>
+        <option value="10">高（10機）</option>
+        <option value="all">無制限</option>
+      </select>
+    </div>
     <div class="setting-row" style="flex-direction:column; align-items:stretch;">
       <div style="display:flex; justify-content:space-between; font-size:13px;">
         <span>エンジン音の音量（3D表示のHUDで 音:ON）</span>
@@ -1018,6 +1028,7 @@ const state = {
   flights: new Map(),
   models: new Map(),
   farLod: false,   // 遠くのモデルのポリゴン削減（LOD）。初期はオフ
+  nearLimit: '8',  // 周辺機の同時表示数: none / 4 / 8 / 10 / all
   globalMinTime: Infinity,
   globalMaxTime: -Infinity,
   currentTime: 0,
@@ -1070,7 +1081,10 @@ const GROUND_URLS = {
   sat: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
 };
 const MAX_LOADED_MODELS = 4;     // 同時にメモリへ展開しておく3Dモデル数の上限
-const NEARBY_RADIUS_M = 20000;   // 3D表示で周辺機を表示する半径(m)
+const NEARBY_RADIUS_M = 10000;   // 3D表示で周辺機を表示する半径(m)
+const NEARBY_SCAN_MARGIN_M = 6000; // 候補リスト更新の間に機体が動くぶんの余裕(m)
+const NEARBY_LIMITS = { none: 0, '4': 4, '8': 8, '10': 10, all: Infinity };   // 周辺機の同時表示数
+function nearLimitCount() { const v = NEARBY_LIMITS[state.nearLimit]; return v === undefined ? 8 : v; }
 const MODEL_FAIL_RETRY_MS = 15000; // モデルの読み込みに失敗してから、再試行してよくなるまでの時間
 // ポリゴン数プリセット: cap = 1機種あたりの最大三角形数（近距離/選択機）。lod = 遠距離で簡略モデルに切り替えるか
 const QUALITY_PRESETS = {
@@ -1133,6 +1147,8 @@ function loadSavedSettings() {
     const q = localStorage.getItem('fr_quality');
     if (q && QUALITY_PRESETS[q]) state.quality = q;
     state.farLod = localStorage.getItem('fr_farLod') === '1';
+    const nlim = localStorage.getItem('fr_nearLimit');
+    if (nlim && NEARBY_LIMITS[nlim] !== undefined) state.nearLimit = nlim;
   } catch (e) {}
   document.getElementById('set-basemap').value = state.baseMap;
   document.getElementById('set-groundmap').value = state.groundMap;
@@ -1143,6 +1159,7 @@ function loadSavedSettings() {
   updateSoundButton();
   document.getElementById('set-quality').value = state.quality;
   document.getElementById('set-far-lod').checked = state.farLod;
+  document.getElementById('set-near-limit').value = state.nearLimit;
 }
 function saveSetting(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function changeBaseMap() {
@@ -1324,101 +1341,198 @@ function canSimplifyMesh(o) {
 }
 
 // 三角形数が targetTris 以下になるよう削減した新しい BufferGeometry を返す（削減不要なら null）
-function simplifyGeometry(geo, targetTris) {
-  const pos = geo.attributes.position;
-  const V = pos.count;
-  const T = geoTriCount(geo);
+// ポリゴン削減（頂点クラスタリング）の本体。Web Worker に送って実行できるよう、THREE に依存しない純粋な関数にしてある。
+// 入力 inp = { V, T, index(Uint32Array|null), attrs: [{name, size, data(Float32Array)}] }
+// 以前より速くするため、Map ではなく型付き配列のハッシュ表を使い、格子の探索回数も減らしている。
+function simplifyCore(inp, targetTris) {
+  const V = inp.V, T = inp.T, index = inp.index, attrs = inp.attrs;
   if (T <= targetTris || V < 12) return null;
-
-  const px = new Float32Array(V), py = new Float32Array(V), pz = new Float32Array(V);
+  let posA = null, uvA = null;
+  for (let i = 0; i < attrs.length; i++) { if (attrs[i].name === 'position') posA = attrs[i]; else if (attrs[i].name === 'uv') uvA = attrs[i]; }
+  if (!posA) return null;
+  const P = posA.data;
   let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   for (let i = 0; i < V; i++) {
-    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-    px[i] = x; py[i] = y; pz[i] = z;
+    const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2];
     if (x < minX) minX = x; if (x > maxX) maxX = x;
     if (y < minY) minY = y; if (y > maxY) maxY = y;
     if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
   }
   const maxD = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-  const uvA = geo.attributes.uv;
   let uk = null;
   if (uvA) {
     uk = new Uint8Array(V);   // UVを粗く区切ったセル。違うUV島の頂点を同じクラスタにしない
-    for (let i = 0; i < V; i++) uk[i] = ((Math.floor(uvA.getX(i) * 16) & 15) << 4) | (Math.floor(uvA.getY(i) * 16) & 15);
+    const U = uvA.data, us = uvA.size;
+    for (let i = 0; i < V; i++) uk[i] = ((Math.floor(U[i * us] * 16) & 15) << 4) | (Math.floor(U[i * us + 1] * 16) & 15);
   }
-  const index = geo.index ? geo.index.array : null;
   const ids = new Int32Array(V);
+  let size = 1024;
+  while (size < V * 2) size *= 2;
+  const mask = size - 1;
+  const hk = new Float64Array(size), hv = new Int32Array(size);
 
   const cluster = (cells) => {
     const inv = cells / maxD;
-    const map = new Map();
+    hv.fill(-1);
     let n = 0;
     for (let i = 0; i < V; i++) {
-      const ix = Math.floor((px[i] - minX) * inv);
-      const iy = Math.floor((py[i] - minY) * inv);
-      const iz = Math.floor((pz[i] - minZ) * inv);
-      const key = (((ix * 1030) + iy) * 1030 + iz) * 256 + (uk ? uk[i] : 0);
-      let id = map.get(key);
-      if (id === undefined) { id = n++; map.set(key, id); }
-      ids[i] = id;
+      const ix = Math.floor((P[3 * i] - minX) * inv);
+      const iy = Math.floor((P[3 * i + 1] - minY) * inv);
+      const iz = Math.floor((P[3 * i + 2] - minZ) * inv);
+      const u = uk ? uk[i] : 0;
+      const key = (((ix * 1030) + iy) * 1030 + iz) * 256 + u;
+      let h = (Math.imul(ix, 73856093) ^ Math.imul(iy, 19349663) ^ Math.imul(iz, 83492791) ^ Math.imul(u, 2654435761)) & mask;
+      for (;;) {
+        const v = hv[h];
+        if (v === -1) { hk[h] = key; hv[h] = n; ids[i] = n++; break; }
+        if (hk[h] === key) { ids[i] = v; break; }
+        h = (h + 1) & mask;
+      }
     }
     let tris = 0;
-    for (let t = 0; t < T; t++) {
-      const a = ids[index ? index[t * 3] : t * 3];
-      const b = ids[index ? index[t * 3 + 1] : t * 3 + 1];
-      const c = ids[index ? index[t * 3 + 2] : t * 3 + 2];
-      if (a !== b && b !== c && a !== c) tris++;
+    if (index) {
+      for (let t = 0; t < T; t++) {
+        const a = ids[index[t * 3]], b = ids[index[t * 3 + 1]], c = ids[index[t * 3 + 2]];
+        if (a !== b && b !== c && a !== c) tris++;
+      }
+    } else {
+      for (let t = 0; t < T; t++) {
+        const a = ids[t * 3], b = ids[t * 3 + 1], c = ids[t * 3 + 2];
+        if (a !== b && b !== c && a !== c) tris++;
+      }
     }
     return { n, tris };
   };
 
-  // 目標の三角形数に収まる最も細かい格子を二分探索（対数スケール）
-  let lo = 4, hi = 1024, best = 4;
-  for (let it = 0; it < 8 && hi - lo > 1; it++) {
-    const mid = Math.max(lo + 1, Math.min(hi - 1, Math.round(Math.sqrt(lo * hi))));
-    const r = cluster(mid);
-    if (r.tris > targetTris) hi = mid; else { lo = mid; best = mid; }
+  // 目標の三角形数に収まる最も細かい格子を探す（三角形数は格子数の約2乗に比例するので、その見積もりで数回で収束させる）
+  let cells = Math.max(4, Math.min(1024, Math.round(Math.sqrt(targetTris) * 0.8)));
+  let lo = 4, hi = 1024, best = -1, last = -1, fin = null;
+  for (let it = 0; it < 6; it++) {
+    const r = cluster(cells);
+    last = cells;
+    if (r.tris <= targetTris) {
+      if (cells > best) { best = cells; fin = r; }
+      if (cells > lo) lo = cells;
+      if (r.tris >= targetTris * 0.8) break;
+    } else if (cells < hi) hi = cells;
+    if (hi - lo <= 1) break;
+    let next = Math.round(cells * Math.sqrt(targetTris / Math.max(1, r.tris)));
+    if (next <= lo) next = lo + 1;
+    if (next >= hi) next = hi - 1;
+    if (next === cells) break;
+    cells = next;
   }
-  const fin = cluster(best);
+  if (best < 0) { best = 4; fin = null; }
+  if (last !== best || !fin) fin = cluster(best);   // ids を最終結果の格子に合わせる
   if (fin.tris < 4) return null;   // 削りすぎて形が消える場合は諦める
 
   const n = fin.n;
-  const out = new THREE.BufferGeometry();
   const cnt = new Uint32Array(n);
   for (let i = 0; i < V; i++) cnt[ids[i]]++;
-  for (const name in geo.attributes) {
-    const a = geo.attributes[name];
-    const sz = a.itemSize;
+  const outAttrs = [];
+  for (let ai = 0; ai < attrs.length; ai++) {
+    const at = attrs[ai], sz = at.size, src = at.data;
     const sum = new Float32Array(n * sz);
     for (let i = 0; i < V; i++) {
-      const o = ids[i] * sz;
-      sum[o] += a.getX(i);
-      if (sz > 1) sum[o + 1] += a.getY(i);
-      if (sz > 2) sum[o + 2] += a.getZ(i);
-      if (sz > 3) sum[o + 3] += a.getW(i);
+      const o = ids[i] * sz, s0 = i * sz;
+      for (let k = 0; k < sz; k++) sum[o + k] += src[s0 + k];
     }
     for (let c = 0; c < n; c++) {
-      const inv = 1 / cnt[c];
-      for (let k = 0; k < sz; k++) sum[c * sz + k] *= inv;
-      if (name === 'normal' && sz === 3) {
+      const iv = 1 / cnt[c];
+      for (let k = 0; k < sz; k++) sum[c * sz + k] *= iv;
+      if (at.name === 'normal' && sz === 3) {
         const l = Math.hypot(sum[c * 3], sum[c * 3 + 1], sum[c * 3 + 2]) || 1;
         sum[c * 3] /= l; sum[c * 3 + 1] /= l; sum[c * 3 + 2] /= l;
       }
     }
-    out.setAttribute(name, new THREE.BufferAttribute(sum, sz));
+    outAttrs.push({ name: at.name, size: sz, data: sum });
   }
-  const idxArr = n > 65535 ? new Uint32Array(fin.tris * 3) : new Uint16Array(fin.tris * 3);
+  const idx = n > 65535 ? new Uint32Array(fin.tris * 3) : new Uint16Array(fin.tris * 3);
   let w = 0;
   for (let t = 0; t < T; t++) {
-    const a = ids[index ? index[t * 3] : t * 3];
-    const b = ids[index ? index[t * 3 + 1] : t * 3 + 1];
-    const c = ids[index ? index[t * 3 + 2] : t * 3 + 2];
-    if (a !== b && b !== c && a !== c) { idxArr[w++] = a; idxArr[w++] = b; idxArr[w++] = c; }
+    const a = ids[index ? index[t * 3] : t * 3], b = ids[index ? index[t * 3 + 1] : t * 3 + 1], c = ids[index ? index[t * 3 + 2] : t * 3 + 2];
+    if (a !== b && b !== c && a !== c) { idx[w++] = a; idx[w++] = b; idx[w++] = c; }
   }
-  out.setIndex(new THREE.BufferAttribute(idxArr, 1));
+  return { n, tris: fin.tris, idx, attrs: outAttrs };
+}
+
+function attrToFloat32(a) {
+  const sz = a.itemSize, n = a.count;
+  if (!a.isInterleavedBufferAttribute && !a.normalized && a.array instanceof Float32Array && a.array.length === n * sz) return a.array.slice();
+  const out = new Float32Array(n * sz);
+  for (let i = 0; i < n; i++) {
+    out[i * sz] = a.getX(i);
+    if (sz > 1) out[i * sz + 1] = a.getY(i);
+    if (sz > 2) out[i * sz + 2] = a.getZ(i);
+    if (sz > 3) out[i * sz + 3] = a.getW(i);
+  }
+  return out;
+}
+
+function prepareSimplifyInput(geo) {
+  const attrs = [];
+  for (const name in geo.attributes) attrs.push({ name, size: geo.attributes[name].itemSize, data: attrToFloat32(geo.attributes[name]) });
+  return { V: geo.attributes.position.count, T: geoTriCount(geo), index: geo.index ? new Uint32Array(geo.index.array) : null, attrs };
+}
+
+function geometryFromSimplified(res) {
+  const out = new THREE.BufferGeometry();
+  for (const a of res.attrs) out.setAttribute(a.name, new THREE.BufferAttribute(a.data, a.size));
+  out.setIndex(new THREE.BufferAttribute(res.idx, 1));
   out.computeBoundingBox();
   out.computeBoundingSphere();
   return out;
+}
+
+// ---- Web Worker（メインスレッドを止めずにポリゴン削減する）----
+let simWorker = null, simWorkerBad = false, simSeq = 0, simIdleTimer = 0;
+const simPending = new Map();
+
+function getSimWorker() {
+  if (simWorkerBad) return null;
+  if (simWorker) return simWorker;
+  try {
+    const src = 'const simplifyCore = ' + simplifyCore.toString() + ';\n' +
+      'self.onmessage = function (e) { var d = e.data, res = null; try { res = simplifyCore(d.inp, d.target); } catch (err) { res = null; }\n' +
+      '  if (res) { var tr = [res.idx.buffer]; for (var i = 0; i < res.attrs.length; i++) tr.push(res.attrs[i].data.buffer); self.postMessage({ id: d.id, res: res }, tr); }\n' +
+      '  else self.postMessage({ id: d.id, res: null }); };';
+    const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    const w = new Worker(url);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    w.onmessage = (e) => { const done = simPending.get(e.data.id); if (done) { simPending.delete(e.data.id); done(e.data.res); } };
+    w.onerror = () => {   // Workerが使えない環境 → 以後はメインスレッドで処理
+      simWorkerBad = true;
+      try { w.terminate(); } catch (x) {}
+      simWorker = null;
+      simPending.forEach((done) => done(undefined));
+      simPending.clear();
+    };
+    simWorker = w;
+    return w;
+  } catch (e) { simWorkerBad = true; return null; }
+}
+
+// 三角形数が targetTris 以下になるよう削減した新しい BufferGeometry を返す（削減不要なら null）
+async function simplifyAsync(geo, targetTris) {
+  const inp = prepareSimplifyInput(geo);
+  const w = getSimWorker();
+  let res;
+  if (w) {
+    const tr = inp.attrs.map((a) => a.data.buffer);
+    if (inp.index) tr.push(inp.index.buffer);
+    const id = ++simSeq;
+    res = await new Promise((resolve) => {
+      simPending.set(id, resolve);
+      try { w.postMessage({ id, inp, target: targetTris }, tr); } catch (e) { simPending.delete(id); resolve(undefined); }
+    });
+    clearTimeout(simIdleTimer);
+    simIdleTimer = setTimeout(() => { if (simWorker && simPending.size === 0) { simWorker.terminate(); simWorker = null; } }, 20000);
+  }
+  if (res === undefined) {   // Workerが使えない/失敗 → メインスレッドで
+    await yieldToUI();
+    res = simplifyCore(w ? prepareSimplifyInput(geo) : inp, targetTris);
+  }
+  return res ? geometryFromSimplified(res) : null;
 }
 
 function collectMeshes(root) {
@@ -1439,7 +1553,7 @@ async function buildReducedGeometries(srcGeos, canSimp, ratio) {
     if (canSimp[i]) {
       const t = geoTriCount(g);
       if (t > 150) {
-        const r = simplifyGeometry(g, Math.max(150, Math.round(t * ratio)));
+        const r = await simplifyAsync(g, Math.max(150, Math.round(t * ratio)));
         if (r) ng = r;
       }
     }
@@ -1489,7 +1603,8 @@ function cullModelParts(root, preset) {
 const MERGE_ATTRS = ['position', 'normal', 'uv', 'uv2', 'color'];
 
 // 同じマテリアルのメッシュを1つに結合（描画回数 = マテリアル数 まで減らす）
-function mergeMeshesByMaterial(root) {
+// 頂点数が多いと一番重い処理なので、配列を直接読み書きして行列計算も展開し、一定時間ごとにUIへ制御を返す。
+async function mergeMeshesByMaterial(root) {
   root.updateMatrixWorld(true);
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   const groups = new Map();
@@ -1505,9 +1620,9 @@ function mergeMeshesByMaterial(root) {
     grp.meshes.push(m);
   });
 
-  const v = new THREE.Vector3();
-  groups.forEach((grp) => {
-    if (grp.meshes.length < 2) return;
+  let last = performance.now();
+  for (const grp of groups.values()) {
+    if (grp.meshes.length < 2) continue;
     let totalV = 0, totalI = 0;
     for (const m of grp.meshes) {
       const g = m.geometry;
@@ -1521,20 +1636,36 @@ function mergeMeshesByMaterial(root) {
     for (const m of grp.meshes) {
       const g = m.geometry;
       const rel = new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld);
-      const nm = new THREE.Matrix3().getNormalMatrix(rel);
+      const e = rel.elements;
+      const ne = new THREE.Matrix3().getNormalMatrix(rel).elements;
       const flip = rel.determinant() < 0;
       const cnt = g.attributes.position.count;
       for (const n of grp.names) {
         const a = g.attributes[n], sz = a.itemSize, out = arrs[n];
-        for (let i = 0; i < cnt; i++) {
-          const o = (vo + i) * sz;
-          if (n === 'position') {
-            v.set(a.getX(i), a.getY(i), a.getZ(i)).applyMatrix4(rel);
-            out[o] = v.x; out[o + 1] = v.y; out[o + 2] = v.z;
-          } else if (n === 'normal') {
-            v.set(a.getX(i), a.getY(i), a.getZ(i)).applyMatrix3(nm).normalize();
-            out[o] = v.x; out[o + 1] = v.y; out[o + 2] = v.z;
-          } else {
+        const src = (!a.isInterleavedBufferAttribute && !a.normalized && a.array instanceof Float32Array && a.array.length >= cnt * sz) ? a.array : null;
+        if (n === 'position') {
+          for (let i = 0; i < cnt; i++) {
+            let x, y, z;
+            if (src) { x = src[3 * i]; y = src[3 * i + 1]; z = src[3 * i + 2]; } else { x = a.getX(i); y = a.getY(i); z = a.getZ(i); }
+            const o = (vo + i) * 3;
+            out[o] = e[0] * x + e[4] * y + e[8] * z + e[12];
+            out[o + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+            out[o + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+          }
+        } else if (n === 'normal') {
+          for (let i = 0; i < cnt; i++) {
+            let x, y, z;
+            if (src) { x = src[3 * i]; y = src[3 * i + 1]; z = src[3 * i + 2]; } else { x = a.getX(i); y = a.getY(i); z = a.getZ(i); }
+            const nx = ne[0] * x + ne[3] * y + ne[6] * z, ny = ne[1] * x + ne[4] * y + ne[7] * z, nz = ne[2] * x + ne[5] * y + ne[8] * z;
+            const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+            const o = (vo + i) * 3;
+            out[o] = nx / l; out[o + 1] = ny / l; out[o + 2] = nz / l;
+          }
+        } else if (src) {
+          out.set(src.subarray(0, cnt * sz), vo * sz);
+        } else {
+          for (let i = 0; i < cnt; i++) {
+            const o = (vo + i) * sz;
             out[o] = a.getX(i);
             if (sz > 1) out[o + 1] = a.getY(i);
             if (sz > 2) out[o + 2] = a.getZ(i);
@@ -1542,22 +1673,31 @@ function mergeMeshesByMaterial(root) {
           }
         }
       }
+      const ia = g.index ? g.index.array : null;
       const ic = g.index ? g.index.count : cnt;
       for (let t = 0; t < ic; t += 3) {
-        const i0 = g.index ? g.index.getX(t) : t;
-        const i1 = g.index ? g.index.getX(t + 1) : t + 1;
-        const i2 = g.index ? g.index.getX(t + 2) : t + 2;
+        const i0 = ia ? ia[t] : t, i1 = ia ? ia[t + 1] : t + 1, i2 = ia ? ia[t + 2] : t + 2;
         idx[io++] = vo + i0;
         idx[io++] = vo + (flip ? i2 : i1);
         idx[io++] = vo + (flip ? i1 : i2);
       }
       vo += cnt;
+      if (performance.now() - last > 12) { await yieldToUI(); last = performance.now(); }
     }
     const mg = new THREE.BufferGeometry();
     grp.names.forEach((n) => mg.setAttribute(n, new THREE.BufferAttribute(arrs[n], grp.meshes[0].geometry.attributes[n].itemSize)));
     mg.setIndex(new THREE.BufferAttribute(totalV > 65535 ? idx : new Uint16Array(idx), 1));
-    mg.computeBoundingBox();
-    mg.computeBoundingSphere();
+    // 境界は結合済みの座標から1回で求める（three の computeBounding* は頂点ごとに関数呼び出しで遅い）
+    const pa = arrs.position;
+    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < totalV; i++) {
+      const x = pa[3 * i], y = pa[3 * i + 1], z = pa[3 * i + 2];
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (z < z0) z0 = z; if (z > z1) z1 = z;
+    }
+    mg.boundingBox = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1));
+    mg.boundingSphere = new THREE.Sphere(mg.boundingBox.getCenter(new THREE.Vector3()), Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2 || 1);
     const merged = new THREE.Mesh(mg, grp.mat);
     merged.name = 'merged';
     merged.renderOrder = grp.ro;
@@ -1566,7 +1706,8 @@ function mergeMeshesByMaterial(root) {
       if (m.parent) m.parent.remove(m);
       m.geometry.dispose();
     }
-  });
+    if (performance.now() - last > 12) { await yieldToUI(); last = performance.now(); }
+  }
 }
 
 // 設定によっては使わないマップ（法線・AO等）を捨てて、テクスチャのメモリと読み込みを減らす
@@ -1642,6 +1783,33 @@ async function downscaleModelTextures(root, maxSize) {
   for (const img of replaced) if (img.close) { try { img.close(); } catch (e) {} }
 }
 
+// WebGLコンテキストが失われる（GPUメモリ不足や長い固まり）と、PMREMで作った環境マップはGPU上にしか無いため
+// 中身が消えて、環境光に頼る金属部分が真っ黒になる。復帰した時に環境マップを作り直す。
+function rebuildEnvironment(renderer, sc) {
+  if (!renderer || !sc) return;
+  const old = sc.environment;
+  const tex = makeEnvTexture(renderer);
+  if (!tex) return;
+  sc.environment = tex;
+  try { if (old) old.dispose(); } catch (e) {}
+  const u = sc.userData || {};
+  if (u.ambient) u.ambient.intensity = u.ambEnv;
+}
+
+function installContextRecovery(renderer, getScene, afterRestore) {
+  const cv = renderer.domElement;
+  cv.addEventListener('webglcontextlost', () => {
+    showToast('GPUメモリ不足で描画がリセットされました。自動で復旧します...');
+  }, false);
+  cv.addEventListener('webglcontextrestored', () => {
+    setTimeout(async () => {
+      rebuildEnvironment(renderer, getScene());
+      showToast('', false);
+      if (afterRestore) { try { await afterRestore(); } catch (e) {} }
+    }, 100);
+  }, false);
+}
+
 // 環境マップ（金属・鏡面系マテリアルは環境が無いと真っ黒になるため、簡易的な空の反射を用意する）
 function makeEnvTexture(renderer) {
   try {
@@ -1679,7 +1847,7 @@ async function buildModelWrapper(gltf, typeCode) {
   // 不要な部品の削除 → マテリアル単位で結合 → 不要マップ破棄 → テクスチャ縮小（読み込み処理の間にUIへ制御を返す）
   cullModelParts(gltf.scene, preset);
   await yieldToUI();
-  mergeMeshesByMaterial(gltf.scene);
+  await mergeMeshesByMaterial(gltf.scene);
   await yieldToUI();
   stripMaterialMaps(gltf.scene, preset.dropMaps);
   await downscaleModelTextures(gltf.scene, preset.tex);
@@ -1764,6 +1932,11 @@ function disposeModelScene(m) {
   m.variants = null;
 }
 
+function onNearLimitChange(v) {
+  state.nearLimit = (NEARBY_LIMITS[v] === undefined) ? '8' : v;
+  saveSetting('fr_nearLimit', state.nearLimit);
+}
+
 function onFarLodChange(v) {
   state.farLod = !!v;
   saveSetting('fr_farLod', v ? '1' : '0');
@@ -1817,6 +1990,8 @@ function evictModels(keepType, limit) {
 }
 
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+// 次の描画フレームまで待つ（タブが裏で止まっていても100msで進む）
+const nextFrame = () => new Promise((r) => { let done = false; const f = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(f); setTimeout(f, 100); });
 
 function collectModelTextures(root) {
   const list = [];
@@ -1855,7 +2030,7 @@ async function warmUpTextures(root, keepType) {
         await sleepMs(300 * (attempt + 1));
       }
       done.set(it.tex, res);
-      if (++n % 4 === 0) await yieldToUI();
+      await nextFrame();   // 大きなテクスチャの転送で固まらないよう、1フレームに1枚ずつ
     }
     if (!res) {
       it.mat[it.key] = null;
@@ -1915,7 +2090,7 @@ function ensureModelLoaded(typeCode) {
   };
   // 複数のGLBを同時に展開するとメモリが跳ねるので、順番に1つずつ処理する
   m.loading = modelQueue.then(task, task);
-  modelQueue = m.loading.catch(() => {});
+  modelQueue = m.loading.catch(() => {}).then(() => sleepMs(80));   // 連続して読み込む時に描画へ間を空ける
   return m.loading;
 }
 
@@ -2989,6 +3164,7 @@ let groundTilesGroup = null;
 const loadedTileKeys = new Set();
 let tileSession = 0;
 const nearbyCache = new Map();
+let envRetryCount = 0;
 let nearScan = null;   // 周辺機の候補リスト（毎フレーム全機を調べず、0.4秒ごとに更新）
 let originLat = 0, originLon = 0;
 
@@ -3323,6 +3499,11 @@ function init3DScene() {
   scene3d.environment = makeEnvTexture(renderer3d);
   const ambient = new THREE.AmbientLight(0xffffff, scene3d.environment ? 0.55 : 0.85);
   scene3d.add(ambient);
+  scene3d.userData = { ambient, ambEnv: 0.55, ambNoEnv: 0.85 };
+  installContextRecovery(renderer3d, () => scene3d, async () => {
+    // 復帰後、読み込み済みモデルのテクスチャをGPUへ順番に転送し直す（一度に再転送して固まるのを避ける）
+    for (const [k, m] of state.models) if (m.scene) await warmUpTextures(m.scene, k);
+  });
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
   dirLight.position.set(500, 2000, 800);
   scene3d.add(dirLight);
@@ -3446,20 +3627,38 @@ function update3DScene() {
     nearCands.length = 0;
     const seen = new Set();
     const nowMs = performance.now();
+    const simT = state.currentTime;
     if (!nearScan || nearScan.sel !== state.selectedIcao || nearScan.n !== state.flights.size ||
-        nowMs - nearScan.realT > 400 || Math.abs(state.currentTime - nearScan.simT) > 2) {
+        nowMs - nearScan.realT > 1000 || Math.abs(simT - nearScan.simT) > 10) {
       const list = [];
       state.flights.forEach((f, icao) => {
-        if (icao === state.selectedIcao || !state.models.get(modelKeyOf(f))) return;
-        const s0 = getInterpolatedState(f, state.currentTime, nearbyTmp);
+        if (icao === state.selectedIcao || !f.n) return;
+        if (f.t[0] > simT + 30 || f.t[f.n - 1] < simT - 30) return;   // 飛行時間帯が違う機体は補間もしない
+        if (!state.models.get(modelKeyOf(f))) return;
+        const s0 = getInterpolatedState(f, simT, nearbyTmp);
         if (!s0) return;
         const p0 = latLonToMeters(s0.lat, s0.lon, originLat, originLon);
-        if (Math.hypot(p0.x - pos.x, p0.z - pos.z) > NEARBY_RADIUS_M + 3000) return;   // 次の更新までの移動ぶんの余裕
+        if (Math.hypot(p0.x - pos.x, p0.z - pos.z) > NEARBY_RADIUS_M + NEARBY_SCAN_MARGIN_M) return;
         list.push([f, icao]);
       });
-      nearScan = { list, sel: state.selectedIcao, n: state.flights.size, realT: nowMs, simT: state.currentTime };
+      nearScan = { list, sel: state.selectedIcao, n: state.flights.size, realT: nowMs, simT };
     }
-    nearScan.list.forEach(([otherFlight, otherIcao]) => {
+    // 近い順に、設定した同時表示数まで（表示中の機体は少し優先して、入れ替わりのちらつきを防ぐ）
+    const maxN = nearLimitCount();
+    const frameList = [];
+    if (maxN > 0) {
+      nearScan.list.forEach((pair) => {
+        const s1 = getInterpolatedState(pair[0], simT, nearbyTmp);
+        if (!s1) return;
+        const p1 = latLonToMeters(s1.lat, s1.lon, originLat, originLon);
+        const d1 = Math.hypot(p1.x - pos.x, p1.z - pos.z);
+        if (d1 > NEARBY_RADIUS_M) return;
+        frameList.push([pair[0], pair[1], d1 * (nearbyCache.has(pair[1]) ? 0.85 : 1)]);
+      });
+      if (frameList.length > 1) frameList.sort((x, y) => x[2] - y[2]);
+      if (frameList.length > maxN) frameList.length = maxN;
+    }
+    frameList.forEach(([otherFlight, otherIcao]) => {
       if (otherIcao === state.selectedIcao) return;
       const otherKey = modelKeyOf(otherFlight);
       const otherModel = state.models.get(otherKey);
@@ -3534,6 +3733,8 @@ function update3DScene() {
   controls3d.update();
   if (interp && state.nearLabels) renderNearLabels();
   else hideNearLabels();
+  // 環境マップの作成に失敗していた場合は、数秒おきに作り直しを試す
+  if (!scene3d.environment && (++envRetryCount % 180 === 0)) rebuildEnvironment(renderer3d, scene3d);
   renderer3d.render(scene3d, camera3d);
 }
 
@@ -3809,6 +4010,8 @@ function initPreview3D() {
   prevScene.environment = makeEnvTexture(prevRenderer);
   const amb = new THREE.AmbientLight(0xffffff, prevScene.environment ? 0.6 : 1.0);
   prevScene.add(amb);
+  prevScene.userData = { ambient: amb, ambEnv: 0.6, ambNoEnv: 1.0 };
+  installContextRecovery(prevRenderer, () => prevScene);
   const dir = new THREE.DirectionalLight(0xffffff, 1.0);
   dir.position.set(20, 50, 30);
   prevScene.add(dir);
