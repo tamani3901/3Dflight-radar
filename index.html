@@ -642,46 +642,6 @@
     display: none;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
   }
-
-  /* 管理者専用設定モーダル */
-  #admin-modal {
-    position: fixed; inset: 0;
-    background: rgba(2, 6, 23, 0.88);
-    backdrop-filter: blur(6px);
-    z-index: 700;
-    display: none;
-    align-items: center; justify-content: center;
-    padding: 16px;
-  }
-  #admin-modal.visible { display: flex; }
-  .admin-card {
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: 16px;
-    padding: 18px;
-    width: 100%; max-width: 420px;
-    max-height: 90vh; overflow-y: auto;
-    display: flex; flex-direction: column; gap: 12px;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.6);
-  }
-  .admin-head { display: flex; align-items: center; justify-content: space-between; }
-  .admin-card .adm-box { display: none; flex-direction: column; gap: 10px; }
-  .admin-card input[type="text"], .admin-card input[type="password"] { width: 100%; }
-  input[type="password"] {
-    background: #0f172a;
-    color: #fff;
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    padding: 9px 12px;
-    font-size: 14px;
-    user-select: text;
-    -webkit-user-select: text;
-  }
-  .adm-note { font-size: 12px; color: var(--text-muted); margin: 0; line-height: 1.5; }
-  .adm-label { font-size: 12px; color: var(--accent-blue); font-weight: 600; }
-  #adm-msg { font-size: 12px; min-height: 16px; line-height: 1.4; }
-  .admin-card details { font-size: 12px; color: var(--text-muted); }
-  .admin-card details summary { cursor: pointer; margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -692,7 +652,7 @@
 <div id="import-screen" class="screen active">
   <div class="import-card">
     <h1>3D FLIGHT RADAR</h1>
-    <p>5秒ごとの全世界フライトデータ（.gz / .json）や trace_full_*.json を読み込めます。3D機体モデルは、管理者設定のサーバーから機種ごとに自動で読み込まれます。</p>
+    <p>5秒ごとの全世界フライトデータ（.gz / .json）や trace_full_*.json と、3D機体モデル（{ICAO機種コード}.glb）を読み込めます。</p>
 
     <div class="setting-row" style="margin-bottom:12px;">
       <span style="font-size:12px; text-align:left;">データ間引き（軽量化）<br><span style="font-size:10px; color:var(--text-muted);">読み込み前に選択。大きいデータほど間隔を広げるとメモリを節約できます</span></span>
@@ -704,28 +664,14 @@
       </select>
     </div>
 
-    <div class="srv-box" style="display:none; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; margin-bottom:12px; text-align:left;">
-      <div style="font-size:12px; color:var(--accent-blue); font-weight:600; margin-bottom:8px;">☁️ サーバーのフライトデータ（フォルダ名で選択）</div>
-      <div style="display:flex; gap:8px;">
-        <select class="srv-folder-select" style="flex:1; min-width:0;"><option value="">フォルダを選択</option></select>
-        <button onclick="refreshServerFolders()" title="一覧を更新">🔄</button>
-      </div>
-      <label style="display:flex; align-items:center; gap:8px; font-size:12px; margin-top:8px; color:var(--text-muted);">
-        <input type="checkbox" class="srv-progressive" checked style="width:16px; height:16px; accent-color:var(--accent);">
-        徐々に読み込む（重いデータ向け・最初の数分だけ読んで開始）
-      </label>
-      <button class="blue" style="width:100%; margin-top:8px;" onclick="loadServerFolder(this)">このフォルダを読み込む</button>
-      <div class="srv-folder-status" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
-    </div>
-
     <div class="file-btn-group">
       <button class="blue" onclick="document.getElementById('file-input-multi').click()">
-        📄 ファイルを選ぶ（.gz / .json 複数選択可）
+        📄 ファイルを選ぶ（.gz / .json / .glb 複数選択可）
       </button>
       <button onclick="document.getElementById('file-input-dir').click()">
         📁 フォルダごと選ぶ
       </button>
-      <input type="file" id="file-input-multi" multiple accept=".json,.gz" style="display:none">
+      <input type="file" id="file-input-multi" multiple accept=".json,.gz,.glb" style="display:none">
       <input type="file" id="file-input-dir" webkitdirectory directory multiple style="display:none">
     </div>
 
@@ -747,7 +693,7 @@
         <span id="stat-time-range" class="badge">---</span>
       </div>
       <div class="file-status-row">
-        <span>使用中の3Dモデル（サーバー等）:</span>
+        <span>読み込んだ3Dモデル (.glb):</span>
         <span id="stat-models" class="badge">0 種類</span>
       </div>
       <div id="loaded-model-list" style="font-size:11px; color:var(--text-muted); margin-top:6px; word-break:break-all;"></div>
@@ -761,58 +707,6 @@
         完了（レーダーへ）
       </button>
     </div>
-
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:6px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);">
-      <span class="admin-status" style="font-size:11px; color:var(--text-muted); text-align:left;"></span>
-      <button style="padding:6px 12px; font-size:12px;" onclick="openAdminModal()">🔒 管理者設定</button>
-    </div>
-  </div>
-</div>
-
-<!-- 管理者専用設定モーダル -->
-<div id="admin-modal">
-  <div class="admin-card">
-    <div class="admin-head">
-      <strong style="font-size:15px;">🔒 管理者専用設定</strong>
-      <button style="padding:4px 10px; font-size:12px;" onclick="closeAdminModal()">✕ 閉じる</button>
-    </div>
-
-    <div id="adm-setup" class="adm-box">
-      <p class="adm-note">初回設定です。管理者パスワードを決めてください。パスワードはコードには含まれず、ハッシュ化してこの端末のブラウザにだけ保存されます。</p>
-      <input type="password" id="adm-new1" placeholder="新しいパスワード（6文字以上）" autocomplete="new-password">
-      <input type="password" id="adm-new2" placeholder="もう一度入力" autocomplete="new-password" onkeydown="if(event.key==='Enter')adminSetup()">
-      <button class="primary" onclick="adminSetup()">パスワードを設定</button>
-    </div>
-
-    <div id="adm-login" class="adm-box">
-      <p class="adm-note">管理者パスワードを入力してください。</p>
-      <input type="password" id="adm-pass" placeholder="パスワード" autocomplete="current-password" onkeydown="if(event.key==='Enter')adminLogin()">
-      <button class="primary" onclick="adminLogin()">ロック解除</button>
-    </div>
-
-    <div id="adm-panel" class="adm-box">
-      <span class="adm-label">3DモデルサーバーのベースURL</span>
-      <input type="text" id="adm-url" placeholder="https://xxxx.trycloudflare.com" autocapitalize="off" autocorrect="off" spellcheck="false" onkeydown="if(event.key==='Enter')adminSaveUrl()">
-      <p class="adm-note">機体を表示するとき、ベースURL/{ICAO機種コード}.glb（例: B789.glb）を自動で取得します。サーバーに無い機種（404）は簡易モデルで表示します。空のまま保存するとサーバー読み込みなしになります。</p>
-      <div style="display:flex; gap:8px;">
-        <button class="primary" style="flex:1;" onclick="adminSaveUrl()">保存</button>
-        <button style="flex:1;" onclick="adminSaveUrl(true)">URLを消去</button>
-      </div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <input type="text" id="adm-test-code" value="B789" placeholder="ANA_B788" style="width:110px;" maxlength="8" autocapitalize="characters">
-        <button style="flex:1;" onclick="adminTestUrl()">接続テスト（この機種を確認）</button>
-      </div>
-      <details>
-        <summary>管理者パスワードを変更</summary>
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          <input type="password" id="adm-chg1" placeholder="新しいパスワード（6文字以上）" autocomplete="new-password">
-          <input type="password" id="adm-chg2" placeholder="もう一度入力" autocomplete="new-password">
-          <button onclick="adminChangePassword()">パスワードを変更</button>
-        </div>
-      </details>
-    </div>
-
-    <div id="adm-msg"></div>
   </div>
 </div>
 
@@ -895,8 +789,6 @@
         <span class="legend-item"><span class="legend-swatch"></span>3Dデータ対応機の飛行時間</span>
         <span class="legend-item"><span class="legend-swatch sel"></span>選択中機体</span>
         <span id="model-flight-summary">3D対応飛行帯: なし</span>
-        <span id="prog-status" style="color:#38bdf8;"></span>
-        <button id="btn-prog-all" style="display:none; padding:2px 8px; font-size:11px;" onclick="progLoadAll()">⏩ 最後まで読み込む</button>
       </div>
       <canvas id="model-flight-canvas" height="14"></canvas>
       <input type="range" id="time-slider" min="0" max="1000" value="0">
@@ -1014,7 +906,7 @@
       <input type="checkbox" id="set-near-labels" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="setNearLabels(this.checked)">
     </div>
     <div class="setting-row">
-      <span>モデルの軽量化レベル（端末に合わせて選択）<br><span style="font-size:10px; color:var(--text-muted);">ポリゴン数・テクスチャ解像度・細かい部品を自動で削減し、遠くの機体ほど簡略モデルで表示します。変更するとモデルを再構築します（「無効」は削減なし。ただし極端に重いモデルのみ安全のため制限）</span></span>
+      <span>モデルの軽量化レベル（端末に合わせて選択）<br><span style="font-size:10px; color:var(--text-muted);">ポリゴン数・テクスチャ解像度・細かい部品を自動で削減します。変更するとモデルを再構築します（「無効」は削減なし。ただし極端に重いモデルのみ安全のため制限）</span></span>
       <select id="set-quality" onchange="onQualityChange(this.value)">
         <option value="ultralow">超軽量</option>
         <option value="low">軽量</option>
@@ -1025,8 +917,8 @@
       </select>
     </div>
     <div class="setting-row">
-      <span>異常パーツの自動削除<br><span style="font-size:10px; color:var(--text-muted);">軽量化に失敗して、元の形から大きくはみ出したパーツ（別の場所に巨大に出るタイヤなど）を自動で消します。変更するとモデルを再構築します</span></span>
-      <input type="checkbox" id="set-prune-abn" checked style="width:20px; height:20px; accent-color:var(--accent);" onchange="onPruneAbnChange(this.checked)">
+      <span>遠くのモデルのポリゴン削減（LOD）<br><span style="font-size:10px; color:var(--text-muted);">遠くの機体を簡略モデルに切り替えます。初期はオフ（簡略モデルを作る処理とメモリが増えるため）。変更するとモデルを再構築します</span></span>
+      <input type="checkbox" id="set-far-lod" style="width:20px; height:20px; accent-color:var(--accent);" onchange="onFarLodChange(this.checked)">
     </div>
     <div class="setting-row" style="flex-direction:column; align-items:stretch;">
       <div style="display:flex; justify-content:space-between; font-size:13px;">
@@ -1058,32 +950,10 @@
   </div>
 
   <div class="settings-section">
-    <h3>管理者専用設定</h3>
-    <div class="setting-row">
-      <span>3DモデルサーバーのURL（パスワード必要）<br><span class="admin-status" style="font-size:10px; color:var(--text-muted);"></span></span>
-      <button onclick="openAdminModal()">🔒 管理者設定を開く</button>
-    </div>
-  </div>
-
-  <div class="settings-section">
     <h3>追加のファイル読み込み</h3>
     <p style="font-size:12px; color:var(--text-muted); margin:0 0 12px 0;">
-      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json を追加でインポートできます。サーバー設定済みなら、フォルダ名を選んで読み込めます。
+      5秒ごとの全世界データ（.gz / .json）、trace_full_*.json、3Dモデル（.glb）を追加でインポートできます。
     </p>
-    <div class="srv-box" style="display:none; background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px; margin-bottom:12px; text-align:left;">
-      <div style="font-size:12px; color:var(--accent-blue); font-weight:600; margin-bottom:8px;">☁️ サーバーのフライトデータ（フォルダ名で選択）</div>
-      <div style="display:flex; gap:8px;">
-        <select class="srv-folder-select" style="flex:1; min-width:0;"><option value="">フォルダを選択</option></select>
-        <button onclick="refreshServerFolders()" title="一覧を更新">🔄</button>
-      </div>
-      <label style="display:flex; align-items:center; gap:8px; font-size:12px; margin-top:8px; color:var(--text-muted);">
-        <input type="checkbox" class="srv-progressive" checked style="width:16px; height:16px; accent-color:var(--accent);">
-        徐々に読み込む（重いデータ向け・最初の数分だけ読んで開始）
-      </label>
-      <button class="blue" style="width:100%; margin-top:8px;" onclick="loadServerFolder(this)">このフォルダを読み込む</button>
-      <div class="srv-folder-status" style="font-size:11px; color:var(--text-muted); margin-top:6px;"></div>
-    </div>
-
     <div class="setting-row">
       <span style="font-size:12px;">データ間引き（これから読む分に適用）</span>
       <select id="thin-select-settings" onchange="onThinChange(this.value)">
@@ -1147,10 +1017,9 @@ const state = {
   snapshotSeqCounter: 0,
   flights: new Map(),
   models: new Map(),
+  farLod: false,   // 遠くのモデルのポリゴン削減（LOD）。初期はオフ
   globalMinTime: Infinity,
   globalMaxTime: -Infinity,
-  pruneAbnormal: true,   // 軽量化で壊れたパーツ（巨大なタイヤ等）を自動で消す
-  prog: null,            // 段階読み込み中のサーバーフォルダ
   currentTime: 0,
   isPlaying: true,
   playbackSpeed: 1,
@@ -1200,7 +1069,9 @@ const GROUND_URLS = {
   street: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`,
   sat: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
 };
-const MAX_LOADED_MODELS = 6;     // 同時にメモリへ展開しておく3Dモデル数の上限
+const MAX_LOADED_MODELS = 4;     // 同時にメモリへ展開しておく3Dモデル数の上限
+const NEARBY_RADIUS_M = 20000;   // 3D表示で周辺機を表示する半径(m)
+const MODEL_FAIL_RETRY_MS = 15000; // モデルの読み込みに失敗してから、再試行してよくなるまでの時間
 // ポリゴン数プリセット: cap = 1機種あたりの最大三角形数（近距離/選択機）。lod = 遠距離で簡略モデルに切り替えるか
 const QUALITY_PRESETS = {
   //            cap:三角形数  tex:テクスチャ最大px  partMin:これより小さい部品は削除(機体全長比)  dropMaps:捨てるマップ  lod:遠距離で簡略化
@@ -1261,9 +1132,7 @@ function loadSavedSettings() {
     if (localStorage.getItem('fr_sound') === '1') state.soundEnabled = true;
     const q = localStorage.getItem('fr_quality');
     if (q && QUALITY_PRESETS[q]) state.quality = q;
-    if (localStorage.getItem('fr_pruneAbn') === '0') state.pruneAbnormal = false;
-    const rb = normalizeBaseUrl(localStorage.getItem('fr_remote_base'));
-    if (rb) remoteBase = rb;
+    state.farLod = localStorage.getItem('fr_farLod') === '1';
   } catch (e) {}
   document.getElementById('set-basemap').value = state.baseMap;
   document.getElementById('set-groundmap').value = state.groundMap;
@@ -1273,9 +1142,7 @@ function loadSavedSettings() {
   document.getElementById('set-volume-val').textContent = `${Math.round(state.volume * 100)}%`;
   updateSoundButton();
   document.getElementById('set-quality').value = state.quality;
-  document.getElementById('set-prune-abn').checked = state.pruneAbnormal;
-  updateAdminStatus();
-  if (remoteBase) refreshServerFolders();
+  document.getElementById('set-far-lod').checked = state.farLod;
 }
 function saveSetting(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function changeBaseMap() {
@@ -1389,788 +1256,6 @@ async function processImportedBuffer(filename, arrayBuffer) {
 
     if (parsedAny) state.importedFileCount++;
   } catch (err) {}
-}
-
-// ================= サーバー（Cloudflare Tunnel）からの3Dモデル自動取得 =================
-// 機体の {ICAO機種コード}.glb を ベースURL/{ICAO機種コード}.glb から取得する。
-// 404（またはサーバーに繋がらない場合）はエラーで止めず、簡易モデル（プロシージャル生成）で表示する。
-const DEFAULT_REMOTE_BASE = '';             // 初期値は空白。管理者設定で1度入力すると、この端末のブラウザに保存される
-const PROCEDURAL_WITHOUT_SERVER = false;    // true にすると、サーバー未設定でもモデルの無い機体を簡易モデルで表示する
-const REMOTE_BUF_MAX_BYTES = 150 * 1024 * 1024;  // ダウンロード済みGLBをメモリに保持する上限
-const REMOTE_MAX_PARALLEL = 3;              // 同時ダウンロード数
-const REMOTE_RETRY_MS = 30000;              // 通信エラーで簡易モデルになった機種を、再取得してよくなるまでの時間
-const FETCHABLE_TYPE_RE = /^[A-Z0-9]{2,4}$/;
-const LIVERY_FETCH_RE = /^[A-Z0-9]{2,3}_[A-Z0-9]{2,4}$/;   // 塗装モデル: ANA_B788 など
-
-let remoteBase = DEFAULT_REMOTE_BASE;
-let remoteGen = 0;                          // URL変更のたびに増やす（古いURLの取得結果を捨てるため）
-const remoteBufCache = new Map();           // 機種コード → ArrayBuffer（LRU）
-let remoteBufBytes = 0;
-const remotePending = new Map();            // 取得中の機種コード → Promise（同じ機種の二重取得を防ぐ）
-let remoteActive = 0;
-const remoteWaiters = [];
-const remoteMiss = new Map();               // 塗装モデルのキー → 再試行してよい時刻（Infinity = サーバーに無い）
-const remoteFlightPending = new Map();      // 機体ごとの取得処理（毎フレームの重複呼び出し防止）
-
-function autoModelsEnabled() { return !!remoteBase || PROCEDURAL_WITHOUT_SERVER; }
-function hasModelFor(f) { return state.models.has(modelKeyOf(f)) || autoModelsEnabled(); }
-
-function modelSourceLabel(f) {
-  const k = modelKeyOf(f);
-  const m = state.models.get(k);
-  if (m) {
-    const ab = (m.scene && m.scene.userData.abnormal) ? `／異常パーツ${m.scene.userData.abnormal}個を除去` : '';
-    return (m.procedural ? '簡易モデル（サーバーに該当GLBなし）' : (m.auto ? `サーバー (${k}.glb)` : `あり (${k}.glb)`)) + ab;
-  }
-  return autoModelsEnabled() ? '表示時にサーバーから取得' : 'なし';
-}
-
-function normalizeBaseUrl(s) {
-  s = String(s || '').trim();
-  if (!s) return '';
-  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'https://' + s;
-  let u;
-  try { u = new URL(s); } catch (e) { return null; }
-  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  return (u.origin + u.pathname).replace(/\/+$/, '');
-}
-
-function remoteSlot(fn) {
-  return new Promise((resolve, reject) => {
-    const run = () => {
-      remoteActive++;
-      Promise.resolve().then(fn).then(resolve, reject).finally(() => {
-        remoteActive--;
-        const next = remoteWaiters.shift();
-        if (next) next();
-      });
-    };
-    if (remoteActive < REMOTE_MAX_PARALLEL) run(); else remoteWaiters.push(run);
-  });
-}
-
-// GLBのバイナリを取得（メモリキャッシュ済みならそれを返す）
-async function fetchRemoteBuffer(code) {
-  const hit = remoteBufCache.get(code);
-  if (hit) { remoteBufCache.delete(code); remoteBufCache.set(code, hit); return hit; }
-  if (!remoteBase) throw new Error('server url is empty');
-  const gen = remoteGen;
-  const url = `${remoteBase}/${encodeURIComponent(code)}.glb`;
-  const buf = await remoteSlot(async () => {
-    const r = await fetch(url, { mode: 'cors' });
-    if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
-    return r.arrayBuffer();
-  });
-  const h = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  if (h.length < 4 || h[0] !== 0x67 || h[1] !== 0x6C || h[2] !== 0x54 || h[3] !== 0x46) {   // 'glTF'
-    const e = new Error('not a GLB'); e.status = 404; throw e;   // エラーページ等が200で返った場合も「無い」扱い
-  }
-  if (gen !== remoteGen) { const e = new Error('stale'); e.status = -1; throw e; }
-  remoteBufCache.set(code, buf);
-  remoteBufBytes += buf.byteLength;
-  while (remoteBufBytes > REMOTE_BUF_MAX_BYTES && remoteBufCache.size > 1) {
-    const k = remoteBufCache.keys().next().value;
-    remoteBufBytes -= remoteBufCache.get(k).byteLength;
-    remoteBufCache.delete(k);
-  }
-  return buf;
-}
-
-function dropRemoteBuffer(code) {
-  const b = remoteBufCache.get(code);
-  if (b) { remoteBufBytes -= b.byteLength; remoteBufCache.delete(code); }
-}
-
-// 自動取得モデルの登録（サーバーGLB or 簡易モデル）
-function putAutoModel(code, opts) {
-  state.modelsVer++;
-  const proc = !!opts.procedural;
-  nearbyCache.forEach((c, icao) => {
-    if (c.userData && c.userData.modelType === code) {
-      if (nearbyPlanesGroup) nearbyPlanesGroup.remove(c);
-      nearbyCache.delete(icao);
-    }
-  });
-  const prev = state.models.get(code);
-  if (prev) {
-    disposeModelScene(prev);
-    prev.source = proc ? null : { remote: true };
-    prev.procedural = proc; prev.retryAt = opts.retryAt || 0; prev.failed = false; prev.auto = true;
-    return prev;
-  }
-  const m = {
-    source: proc ? null : { remote: true }, scene: null, loading: null, failed: false, lastUsed: 0,
-    rotX: 0, rotY: 0, rotZ: 0, scale: 1.0, key: code, base: (LIVERY_KEY_RE.exec(code) || [])[2] || null, touched: false,
-    auto: true, procedural: proc, retryAt: opts.retryAt || 0
-  };
-  state.models.set(code, m);
-  return m;
-}
-
-// その機種のモデルを用意する。ローカル登録があればそれを優先 → サーバー → 404/通信エラーなら簡易モデル
-function ensureRemoteModel(code, force) {
-  code = String(code || '').toUpperCase().trim();
-  if (!code || !autoModelsEnabled()) return Promise.resolve(false);
-  const ex = state.models.get(code);
-  if (ex && !ex.auto) return Promise.resolve(true);
-  if (ex && !(force || (ex.procedural && ex.retryAt && Date.now() > ex.retryAt))) return Promise.resolve(true);
-  if (remotePending.has(code)) return remotePending.get(code);
-  const gen = remoteGen;
-  const p = (async () => {
-    if (!remoteBase || !FETCHABLE_TYPE_RE.test(code)) { putAutoModel(code, { procedural: true }); return true; }
-    try {
-      await fetchRemoteBuffer(code);
-      if (gen !== remoteGen) return false;
-      putAutoModel(code, { procedural: false });
-    } catch (e) {
-      if (gen !== remoteGen) return false;
-      const missing = e && (e.status === 404 || e.status === 410);
-      if (!missing) console.warn('server model fetch failed:', code, e);
-      putAutoModel(code, { procedural: true, retryAt: missing ? 0 : Date.now() + REMOTE_RETRY_MS });
-    }
-    return true;
-  })();
-  remotePending.set(code, p);
-  p.finally(() => { if (remotePending.get(code) === p) remotePending.delete(code); });
-  return p;
-}
-
-// 塗装モデル（例: ANA_B788）。あれば優先、無ければ何も登録せず機種モデルへ（簡易モデルにはしない）
-function ensureLivery(lk) {
-  if (!remoteBase || !LIVERY_FETCH_RE.test(lk)) return Promise.resolve(false);
-  if (state.models.has(lk)) return Promise.resolve(true);
-  const until = remoteMiss.get(lk);
-  if (until !== undefined && Date.now() < until) return Promise.resolve(false);
-  if (remotePending.has(lk)) return remotePending.get(lk);
-  const gen = remoteGen;
-  const p = (async () => {
-    try {
-      await fetchRemoteBuffer(lk);
-      if (gen !== remoteGen) return false;
-      putAutoModel(lk, { procedural: false });
-      return true;
-    } catch (e) {
-      if (gen !== remoteGen) return false;
-      const missing = e && (e.status === 404 || e.status === 410);
-      remoteMiss.set(lk, missing ? Infinity : Date.now() + REMOTE_RETRY_MS);
-      return false;
-    }
-  })();
-  remotePending.set(lk, p);
-  p.finally(() => { if (remotePending.get(lk) === p) remotePending.delete(lk); });
-  return p;
-}
-
-// 機種モデルが既にある機体でも、塗装モデルがサーバーにあれば後から切り替える（周辺機用・毎フレーム呼んでも軽い）
-function wantLivery(f) {
-  if (!remoteBase || !f.airline) return;
-  const lk = f.airline + '_' + f.type;
-  if (state.models.has(lk) || remotePending.has(lk)) return;
-  const until = remoteMiss.get(lk);
-  if (until !== undefined && Date.now() < until) return;
-  ensureLivery(lk);
-}
-
-// その機体のモデルを用意する: 塗装モデル(航空会社コード_機種コード) → 機種モデル → 簡易モデル
-function ensureRemoteForFlight(f) {
-  if (!f || !autoModelsEnabled()) return Promise.resolve(false);
-  const tag = f.icao;
-  if (remoteFlightPending.has(tag)) return remoteFlightPending.get(tag);
-  const gen = remoteGen;
-  const p = (async () => {
-    if (remoteBase && f.airline) {
-      const lk = f.airline + '_' + f.type;
-      if (state.models.has(lk) || await ensureLivery(lk)) return true;
-    }
-    return ensureRemoteModel(f.type);
-  })();
-  remoteFlightPending.set(tag, p);
-  p.finally(() => { if (gen === remoteGen && remoteFlightPending.get(tag) === p) remoteFlightPending.delete(tag); });
-  return p;
-}
-
-// URLを変えた時：自動取得したモデルとキャッシュを全部捨てる（ローカル読込のモデルは残す）
-function resetRemoteModels() {
-  remoteGen++;
-  remotePending.clear(); remoteMiss.clear(); remoteFlightPending.clear();
-  remoteBufCache.clear(); remoteBufBytes = 0;
-  const del = [];
-  state.models.forEach((m, k) => { if (m.auto) del.push(k); });
-  del.forEach((k) => { disposeModelScene(state.models.get(k)); state.models.delete(k); });
-  state.modelsVer++;
-  nearbyCache.clear();
-  if (nearbyPlanesGroup) while (nearbyPlanesGroup.children.length > 0) nearbyPlanesGroup.remove(nearbyPlanesGroup.children[0]);
-  timelineDirty = true;
-}
-
-// ---- 簡易3Dモデル（サーバーにGLBが無い機種用）。機首 -Z / 右翼 +X / 上 +Y ----
-const HELI_CODES = new Set(['R22', 'R44', 'R66', 'B06', 'B407', 'B412', 'B429', 'AS50', 'AS55', 'AS65', 'EC20', 'EC30', 'EC35', 'EC45', 'EC55',
-  'A109', 'A119', 'A139', 'A169', 'S76', 'S92', 'S61', 'H60', 'H64', 'H47', 'MI8', 'MI26', 'KA32']);
-const GA_SINGLE_CODES = new Set(['C172', 'C182', 'C208', 'P28A', 'SR20', 'SR22', 'TBM9', 'TBM8', 'PA46', 'DA40', 'PC12']);
-const PROP_TWIN_CODES = new Set(['DA62', 'BE58', 'BE9L', 'BE20', 'AT42', 'AT43', 'AT45', 'AT72', 'AT75', 'AT76',
-  'DH8A', 'DH8B', 'DH8C', 'DH8D', 'SF34', 'B190', 'JS41', 'BN2P', 'SW4', 'YS11']);
-const FOUR_ENGINE_CODES = new Set(['B741', 'B742', 'B743', 'B744', 'B748', 'B701', 'B703', 'A342', 'A343', 'A345', 'A346', 'A388', 'A124', 'C17', 'C5M']);
-
-function buildProceduralModel(typeCode) {
-  const code = String(typeCode || '').toUpperCase().split('_').pop();
-  const real = getModelRealSize(code);
-  const S = real.size;
-  const root = new THREE.Group();
-  root.userData.realSize = S;
-  root.userData.sizeKnown = real.known;
-  root.userData.tris = 0;
-  root.userData.srcTris = 0;
-  root.userData.procedural = true;
-
-  const mk = (color, rough, metal, extra) => new THREE.MeshStandardMaterial(Object.assign(
-    { color, roughness: rough, metalness: metal, side: THREE.DoubleSide }, extra || {}));
-  const white = mk(0xe5e7eb, 0.65, 0.15);
-  const dark = mk(0x475569, 0.6, 0.3);
-  const accent = mk(0x2563eb, 0.6, 0.1);
-  const disc = mk(0x1e293b, 1, 0, { transparent: true, opacity: 0.35 });
-  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); root.add(m); return m; };
-
-  // 平らな板: 点は (x, z)。厚みは Y 方向、Y を中心に配置
-  const wingGeo = (pts, th) => {
-    const sh = new THREE.Shape();
-    pts.forEach((p, i) => { if (i === 0) sh.moveTo(p[0], p[1]); else sh.lineTo(p[0], p[1]); });
-    const g = new THREE.ExtrudeGeometry(sh, { depth: th, bevelEnabled: false });
-    g.rotateX(Math.PI / 2);
-    g.translate(0, th / 2, 0);
-    return g;
-  };
-  // 垂直尾翼: 点は (z, y)。厚みは X 方向
-  const finGeo = (pts, th) => {
-    const sh = new THREE.Shape();
-    pts.forEach((p, i) => { if (i === 0) sh.moveTo(p[0], p[1]); else sh.lineTo(p[0], p[1]); });
-    const g = new THREE.ExtrudeGeometry(sh, { depth: th, bevelEnabled: false });
-    g.rotateY(-Math.PI / 2);
-    g.translate(th / 2, 0, 0);
-    return g;
-  };
-  const zCyl = (r0, r1, len, seg) => { const g = new THREE.CylinderGeometry(r0, r1, len, seg || 16); g.rotateX(Math.PI / 2); return g; };
-
-  // ---------- ヘリコプター ----------
-  if (HELI_CODES.has(code)) {
-    const rb = S * 0.085;
-    const cabin = add(new THREE.SphereGeometry(1, 18, 12), white, 0, 0, -0.05 * S);
-    cabin.scale.set(rb, rb * 0.95, S * 0.15);
-    add(zCyl(rb * 0.12, rb * 0.32, S * 0.40, 10), white, 0, rb * 0.15, 0.25 * S);   // 細い方（上）が +Z 側＝後ろ
-    add(finGeo([[0.38 * S, rb * 0.15], [0.455 * S, rb * 1.5], [0.485 * S, rb * 1.5], [0.47 * S, rb * 0.15]], rb * 0.12), accent, 0, 0, 0);
-    add(new THREE.CylinderGeometry(rb * 0.1, rb * 0.1, rb * 0.3, 8), dark, 0, rb * 1.05, -0.05 * S);
-    const rr = S * 0.46, ry = rb * 1.25;
-    add(new THREE.CylinderGeometry(rr, rr, S * 0.003, 36), disc, 0, ry, -0.05 * S);
-    add(new THREE.BoxGeometry(rr * 2, S * 0.004, S * 0.012), dark, 0, ry, -0.05 * S);
-    const b2 = add(new THREE.BoxGeometry(rr * 2, S * 0.004, S * 0.012), dark, 0, ry, -0.05 * S);
-    b2.rotation.y = Math.PI / 2;
-    for (const sx of [-1, 1]) add(zCyl(S * 0.006, S * 0.006, S * 0.28, 8), dark, sx * rb * 0.75, -rb * 1.05, -0.04 * S);
-    return root;
-  }
-
-  // ---------- 固定翼（ジェット / ターボプロップ / 小型機） ----------
-  const gaSingle = GA_SINGLE_CODES.has(code);
-  const propTwin = PROP_TWIN_CODES.has(code);
-  const fourEng = FOUR_ENGINE_CODES.has(code);
-  const jet = !gaSingle && !propTwin;
-  const Lf = S * 0.9;                       // 胴体の長さ
-  const R = Math.max(0.45, Lf * (gaSingle ? 0.075 : 0.05));   // 胴体の半径
-  const b = S / 2;                          // 片翼の長さ
-
-  add(zCyl(R, R, Lf * 0.70, 18), white, 0, 0, -0.02 * Lf);
-  const nose = add(zCyl(R * 0.12, R, Lf * 0.13, 18), white, 0, 0, -0.435 * Lf);
-  nose.geometry.rotateX(Math.PI);           // 細い側を前（-Z）へ
-  add(zCyl(R * 0.18, R, Lf * 0.17, 18), white, 0, 0, 0.415 * Lf);   // 細い側が後ろ（+Z）
-
-  // 主翼
-  const z0 = (gaSingle ? -0.20 : -0.08) * Lf;
-  const sweep = (jet ? 0.17 : 0) * Lf;
-  const rootC = (jet ? 0.17 : 0.11) * Lf, tipC = (jet ? 0.04 : 0.07) * Lf;
-  const wy = gaSingle ? R * 0.65 : -R * 0.45;
-  const wth = Math.max(0.12, R * 0.12);
-  for (const sx of [1, -1]) {
-    add(wingGeo([[0, z0], [sx * b, z0 + sweep], [sx * b, z0 + sweep + tipC], [0, z0 + rootC]], wth), white, 0, wy, 0);
-  }
-  // 水平尾翼・垂直尾翼
-  const hb = b * (jet ? 0.36 : 0.32), hz = 0.36 * Lf, hsw = (jet ? 0.05 : 0.01) * Lf;
-  for (const sx of [1, -1]) {
-    add(wingGeo([[0, hz], [sx * hb, hz + hsw], [sx * hb, hz + hsw + 0.035 * Lf], [0, hz + 0.09 * Lf]], wth * 0.8), white, 0, R * 0.2, 0);
-  }
-  const fh = Lf * (gaSingle ? 0.13 : 0.16);
-  add(finGeo([[0.30 * Lf, R * 0.7], [0.44 * Lf, R * 0.7 + fh], [0.485 * Lf, R * 0.7 + fh], [0.50 * Lf, R * 0.7]], wth), accent, 0, 0, 0);
-
-  // エンジン / プロペラ
-  if (jet) {
-    const xs = fourEng ? [-0.46, -0.22, 0.22, 0.46] : [-0.30, 0.30];
-    for (const f of xs) {
-      const ex = f * b, ez = z0 + sweep * Math.abs(f) - 0.03 * Lf;
-      add(zCyl(R * 0.42, R * 0.36, Lf * 0.09, 14), dark, ex, wy - R * 0.4, ez);
-    }
-  } else if (propTwin) {
-    for (const sx of [-1, 1]) {
-      const ex = sx * 0.30 * b, ez = z0 - 0.04 * Lf;
-      add(zCyl(R * 0.3, R * 0.3, Lf * 0.16, 12), dark, ex, wy, ez);
-      add(new THREE.CylinderGeometry(R * 1.05, R * 1.05, 0.04, 24).rotateX(Math.PI / 2), disc, ex, wy, ez - Lf * 0.09);
-    }
-  } else {
-    add(new THREE.CylinderGeometry(R * 1.2, R * 1.2, 0.04, 24).rotateX(Math.PI / 2), disc, 0, 0, -0.5 * Lf - 0.05);
-  }
-  return root;
-}
-
-// ================= サーバーのフライトデータ（フォルダ名で選択） =================
-// 取得方法（上から順に試す）:
-//  1) ベースURL/manifest.json … {"フォルダ名": ["a.json.gz", ...], ...} か {"folders": {...}}、または ["フォルダ名/a.json.gz", ...] の配列
-//  2) ディレクトリ一覧ページ（python -m http.server / nginx autoindex 等）のリンクをフォルダ・ファイルとして使う
-const DATA_FILE_RE = /\.(json|gz)$/i;
-let serverFolders = null;   // Map: フォルダ名 → ファイル名の配列（一覧ページ方式は選択時に取得するので null）
-let serverLoading = false;
-
-function encPath(p) { return p.split('/').map(encodeURIComponent).join('/'); }
-
-async function listDirNames(url) {
-  const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
-  const out = [];
-  doc.querySelectorAll('a[href]').forEach((a) => {
-    let h = (a.getAttribute('href') || '').trim();
-    if (!h || h[0] === '?' || h[0] === '#' || h[0] === '/' || /^[a-z][a-z0-9+.-]*:/i.test(h) || h.startsWith('..')) return;
-    h = h.replace(/^\.\//, '');
-    try { h = decodeURIComponent(h); } catch (e) {}
-    if (h && h.indexOf('/') === h.length - 1 || (h && h.indexOf('/') < 0)) out.push(h);
-  });
-  return out;
-}
-
-async function fetchServerIndex() {
-  if (!remoteBase) throw new Error('no base url');
-  try {
-    const r = await fetch(`${remoteBase}/manifest.json`, { mode: 'cors', cache: 'no-store' });
-    if (r.ok) {
-      const j = await r.json();
-      const folders = new Map();
-      const add = (folder, file) => {
-        if (!folder || !DATA_FILE_RE.test(file)) return;
-        if (!folders.has(folder)) folders.set(folder, []);
-        folders.get(folder).push(file);
-      };
-      if (Array.isArray(j)) {
-        j.forEach((p) => {
-          p = String(p).replace(/^\.?\//, '');
-          const i = p.indexOf('/');
-          if (i > 0) add(p.slice(0, i), p.slice(i + 1));
-        });
-      } else if (j && typeof j === 'object') {
-        const src = (j.folders && typeof j.folders === 'object') ? j.folders : j;
-        Object.keys(src).forEach((k) => { if (Array.isArray(src[k])) src[k].forEach((f) => add(k, String(f))); });
-      }
-      if (folders.size) return folders;
-    }
-  } catch (e) { /* manifest が無い・読めない → 一覧ページを試す */ }
-  const names = await listDirNames(`${remoteBase}/`);
-  const folders = new Map();
-  names.filter((n) => n.endsWith('/')).forEach((n) => folders.set(n.slice(0, -1), null));
-  return folders;
-}
-
-async function getFolderFiles(folder) {
-  const known = serverFolders && serverFolders.get(folder);
-  if (known) return known.slice().sort();
-  const names = await listDirNames(`${remoteBase}/${encPath(folder)}/`);
-  return names.filter((n) => DATA_FILE_RE.test(n)).sort();
-}
-
-function setServerStatus(text) {
-  document.querySelectorAll('.srv-folder-status').forEach((el) => { el.textContent = text || ''; });
-}
-
-async function refreshServerFolders() {
-  const sels = document.querySelectorAll('.srv-folder-select');
-  const fill = (names) => {
-    sels.forEach((sel) => {
-      const cur = sel.value;
-      sel.innerHTML = '';
-      const o0 = document.createElement('option');
-      o0.value = ''; o0.textContent = names.length ? 'フォルダを選択' : '（フォルダなし）';
-      sel.appendChild(o0);
-      names.forEach((n) => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o); });
-      if (cur && names.includes(cur)) sel.value = cur;
-    });
-  };
-  if (!remoteBase) { serverFolders = null; fill([]); setServerStatus(''); return; }
-  setServerStatus('フォルダ一覧を取得中...');
-  try {
-    serverFolders = await fetchServerIndex();
-    const names = Array.from(serverFolders.keys()).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    fill(names);
-    setServerStatus(names.length ? `${names.length} 個のフォルダ` : 'フォルダが見つかりません（manifest.json か、ディレクトリ一覧を公開してください）');
-  } catch (e) {
-    serverFolders = null; fill([]);
-    setServerStatus('一覧を取得できません（URL・トンネル・CORS・ディレクトリ一覧の公開を確認）');
-  }
-}
-
-async function loadServerFolder(btn) {
-  const box = btn.closest('.srv-box');
-  const folder = box ? box.querySelector('.srv-folder-select').value : '';
-  if (!folder || serverLoading || !remoteBase) return;
-  serverLoading = true;
-  try {
-    showToast('ファイル一覧を取得中...');
-    const files = await getFolderFiles(folder);
-    if (!files.length) {
-      showToast('このフォルダにデータ（.json / .gz）がありません');
-      setTimeout(() => showToast('', false), 2500);
-      return;
-    }
-    const fetchBuf = (f) => fetchServerFile(folder, f);
-    // ファイル名の時刻が読めて、ファイル数が多い時は「徐々に読み込む」
-    const progressive = box.querySelector('.srv-progressive') && box.querySelector('.srv-progressive').checked;
-    if (progressive && files.length >= PROG_MIN_FILES && !files.some((f) => /trace_full/i.test(f))) {
-      const entries = files.map((f) => ({ f, ts: tsFromName(f) })).filter((e) => e.ts !== null);
-      if (entries.length >= files.length * 0.9) {
-        entries.sort((a, b) => a.ts - b.ts || (a.f < b.f ? -1 : 1));
-        await startProgressive(folder, entries);
-        return;
-      }
-    }
-    // 4件先まで並行して取得しつつ、ファイル名順に処理する
-    const queue = []; let nextIdx = 0, done = 0, fail = 0;
-    const pump = () => { while (queue.length < 4 && nextIdx < files.length) { const f = files[nextIdx++]; queue.push({ f, p: fetchBuf(f) }); } };
-    pump();
-    while (queue.length) {
-      const { f, p } = queue.shift();
-      pump();
-      let buf = await p;
-      if (buf) await processImportedBuffer(f.split('/').pop(), buf); else fail++;
-      buf = null;
-      done++;
-      showToast(`サーバーから読み込み中... ${done}/${files.length}`);
-      if (done % 20 === 0) await new Promise((r) => setTimeout(r, 0));
-    }
-    finalizeImportedData();
-    showToast(`「${folder}」: ${done - fail} 件読み込み` + (fail ? `（${fail} 件失敗）` : ''));
-    setTimeout(() => showToast('', false), 3000);
-  } catch (e) {
-    showToast('読み込みに失敗しました（一覧を取得できません）');
-    setTimeout(() => showToast('', false), 3000);
-  } finally {
-    serverLoading = false;
-  }
-}
-
-const PROG_MIN_FILES = 40;          // これ以上のファイル数なら段階読み込みを使える
-const PROG_INITIAL_FILES = 30;      // 最初に読む件数
-const PROG_BATCH_FILES = 12;        // 続きを読む1回あたりの件数
-const PROG_LOOKAHEAD_SEC = 600;     // 再生位置の何秒先まで読んでおくか（再生速度が速いほど増える）
-
-function tsFromName(name) {
-  const m = /(\d{10,13})/.exec(name);
-  if (!m) return null;
-  let v = Number(m[1]);
-  if (v > 1e12) v /= 1000;
-  return (v > 1e9 && v < 4e9) ? v : null;
-}
-
-async function fetchServerFile(folder, f) {
-  try {
-    const r = await fetch(`${remoteBase}/${encPath(folder)}/${encPath(f)}`, { mode: 'cors' });
-    return r.ok ? await r.arrayBuffer() : null;
-  } catch (e) { return null; }
-}
-
-// 次の count 件を読み込む（4件先まで並行取得しつつ、時刻順に処理）
-async function progLoadBatch(prog, count) {
-  const list = prog.entries.slice(prog.next, prog.next + count);
-  if (!list.length) return;
-  const queue = []; let k = 0;
-  const pump = () => { while (queue.length < 4 && k < list.length) { const e = list[k++]; queue.push({ e, p: fetchServerFile(prog.folder, e.f) }); } };
-  pump();
-  while (queue.length) {
-    const { e, p } = queue.shift();
-    pump();
-    let buf = await p;
-    if (state.prog !== prog) return;   // 別のフォルダに切り替えられた
-    if (buf) await processImportedBuffer(e.f.split('/').pop(), buf);
-    buf = null;
-    prog.next++;
-    prog.loadedUntil = e.ts;
-  }
-  finalizeImportedData({ light: true });
-}
-
-async function progLoop(prog) {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  while (state.prog === prog && prog.next < prog.entries.length) {
-    const ahead = Math.max(PROG_LOOKAHEAD_SEC, state.playbackSpeed * 180);
-    if (!(prog.loadAll || prog.loadedUntil < state.currentTime + ahead)) { await sleep(400); continue; }
-    try { await progLoadBatch(prog, PROG_BATCH_FILES); } catch (e) { console.warn('progressive load error', e); await sleep(1000); }
-    await sleep(0);
-  }
-  if (state.prog === prog && prog.next >= prog.entries.length) {
-    prog.done = true;
-    prog.loadedUntil = prog.fullMax;
-    finalizeImportedData();   // 最後に配列を詰め直す
-    updateProgStatus();
-  }
-}
-
-async function startProgressive(folder, entries) {
-  const prog = {
-    folder, entries, next: 0, done: false, loadAll: false,
-    fullMin: entries[0].ts, fullMax: entries[entries.length - 1].ts + 5, loadedUntil: -Infinity
-  };
-  state.prog = prog;
-  state.currentTime = prog.fullMin;
-  showToast('最初の部分を読み込み中...');
-  await progLoadBatch(prog, PROG_INITIAL_FILES);
-  showToast(`最初の部分を読み込みました。「完了」で開始できます（続きは自動で読み込みます）`);
-  setTimeout(() => showToast('', false), 3500);
-  if (!prog.timer) prog.timer = setInterval(updateProgStatus, 500);
-  updateProgStatus();
-  progLoop(prog);   // 続きは裏で読み込む
-}
-
-function progLoadAll() {
-  if (state.prog) { state.prog.loadAll = true; updateProgStatus(); }
-}
-
-function updateProgStatus() {
-  const p = state.prog;
-  const el = document.getElementById('prog-status');
-  const btn = document.getElementById('btn-prog-all');
-  if (!p) { if (el) el.textContent = ''; if (btn) btn.style.display = 'none'; return; }
-  let text;
-  if (p.done) {
-    text = '全て読み込み済み';
-    if (p.timer) { clearInterval(p.timer); p.timer = null; }
-  } else {
-    const pct = Math.round(p.next / p.entries.length * 100);
-    text = `読み込み済み: ${formatJSTShort(p.loadedUntil)} まで（${pct}%）`;
-    if (state.currentTime >= p.loadedUntil - 1 && p.next < p.entries.length) text = '⏳ 読み込み待ち… ' + text;
-  }
-  if (el) el.textContent = text;
-  if (btn) btn.style.display = (!p.done && !p.loadAll) ? 'inline-block' : 'none';
-  setServerStatus(p.done ? `「${p.folder}」全て読み込み済み` : `「${p.folder}」${text}`);
-}
-
-// ================= 管理者専用設定（サーバーURLの設定・パスワード保護） =================
-// パスワードはコードに一切書かない。初回に管理者が決めたパスワードを、ソルト付きでハッシュ化して
-// この端末（ブラウザの localStorage）にだけ保存する。URLもこの端末のブラウザに保存される。
-const ADMIN_KEYS = { base: 'fr_remote_base', salt: 'fr_admin_salt', hash: 'fr_admin_hash', algo: 'fr_admin_algo', fail: 'fr_admin_fail' };
-let adminUnlocked = false;
-
-function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
-function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
-function b64e(bytes) { let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
-function b64d(str) { const s = atob(str); const o = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) o[i] = s.charCodeAt(i); return o; }
-function concatBytes() {
-  let n = 0; for (const a of arguments) n += a.length;
-  const o = new Uint8Array(n); let p = 0;
-  for (const a of arguments) { o.set(a, p); p += a.length; }
-  return o;
-}
-
-// crypto.subtle が使えない環境（http のLAN接続など）用の SHA-256
-function sha256Bytes(data) {
-  const K = [], H = [];
-  let n = 2, c = 0;
-  while (c < 64) {
-    let p = true;
-    for (let i = 2; i * i <= n; i++) if (n % i === 0) { p = false; break; }
-    if (p) {
-      if (c < 8) H[c] = (Math.pow(n, 0.5) % 1 * 4294967296) | 0;
-      K[c] = (Math.pow(n, 1 / 3) % 1 * 4294967296) | 0;
-      c++;
-    }
-    n++;
-  }
-  const l = data.length, padLen = ((l + 9 + 63) >> 6) << 6;
-  const m = new Uint8Array(padLen);
-  m.set(data); m[l] = 0x80;
-  const dv = new DataView(m.buffer);
-  dv.setUint32(padLen - 8, Math.floor(l * 8 / 4294967296));
-  dv.setUint32(padLen - 4, (l * 8) >>> 0);
-  const w = new Int32Array(64);
-  for (let o = 0; o < padLen; o += 64) {
-    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(o + i * 4);
-    for (let i = 16; i < 64; i++) {
-      const a = w[i - 15], bb = w[i - 2];
-      const s0 = ((a >>> 7) | (a << 25)) ^ ((a >>> 18) | (a << 14)) ^ (a >>> 3);
-      const s1 = ((bb >>> 17) | (bb << 15)) ^ ((bb >>> 19) | (bb << 13)) ^ (bb >>> 10);
-      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
-    }
-    let a = H[0], b2 = H[1], c2 = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
-    for (let i = 0; i < 64; i++) {
-      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-      const ch = (e & f) ^ (~e & g);
-      const t1 = (h + S1 + ch + K[i] + w[i]) | 0;
-      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-      const maj = (a & b2) ^ (a & c2) ^ (b2 & c2);
-      const t2 = (S0 + maj) | 0;
-      h = g; g = f; f = e; e = (d + t1) | 0; d = c2; c2 = b2; b2 = a; a = (t1 + t2) | 0;
-    }
-    H[0] = (H[0] + a) | 0; H[1] = (H[1] + b2) | 0; H[2] = (H[2] + c2) | 0; H[3] = (H[3] + d) | 0;
-    H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
-  }
-  const out = new Uint8Array(32), od = new DataView(out.buffer);
-  for (let i = 0; i < 8; i++) od.setInt32(i * 4, H[i]);
-  return out;
-}
-
-async function adminDerive(pw, salt, algo) {
-  const enc = new TextEncoder().encode(pw);
-  if (algo === 'pbkdf2') {
-    if (!(window.crypto && crypto.subtle)) throw new Error('crypto.subtle unavailable');
-    const key = await crypto.subtle.importKey('raw', enc, 'PBKDF2', false, ['deriveBits']);
-    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 150000 }, key, 256);
-    return new Uint8Array(bits);
-  }
-  let h = sha256Bytes(concatBytes(salt, enc));
-  for (let i = 0; i < 3000; i++) h = sha256Bytes(concatBytes(h, enc, salt));
-  return h;
-}
-
-function adminHasPassword() { return !!(lsGet(ADMIN_KEYS.hash) && lsGet(ADMIN_KEYS.salt)); }
-
-async function adminStorePassword(pw) {
-  const salt = new Uint8Array(16);
-  crypto.getRandomValues(salt);
-  const algo = (window.crypto && crypto.subtle) ? 'pbkdf2' : 'sha256x';
-  const hash = b64e(await adminDerive(pw, salt, algo));
-  return lsSet(ADMIN_KEYS.salt, b64e(salt)) && lsSet(ADMIN_KEYS.algo, algo) && lsSet(ADMIN_KEYS.hash, hash);
-}
-
-async function adminVerify(pw) {
-  const salt = b64d(lsGet(ADMIN_KEYS.salt));
-  const algo = lsGet(ADMIN_KEYS.algo) || 'pbkdf2';
-  const got = b64e(await adminDerive(pw, salt, algo));
-  const want = lsGet(ADMIN_KEYS.hash) || '';
-  let diff = got.length ^ want.length;
-  for (let i = 0; i < got.length && i < want.length; i++) diff |= got.charCodeAt(i) ^ want.charCodeAt(i);
-  return diff === 0;
-}
-
-function adminLockRemainingMs() {
-  try {
-    const f = JSON.parse(lsGet(ADMIN_KEYS.fail) || 'null');
-    return f && f.until > Date.now() ? f.until - Date.now() : 0;
-  } catch (e) { return 0; }
-}
-function adminRegisterFailure() {
-  let n = 0;
-  try { const f = JSON.parse(lsGet(ADMIN_KEYS.fail) || 'null'); if (f) n = f.n || 0; } catch (e) {}
-  n++;
-  lsSet(ADMIN_KEYS.fail, JSON.stringify({ n, until: n >= 5 ? Date.now() + Math.min(3600000, 60000 * (n - 4)) : 0 }));
-}
-
-function adminMsg(text, ok) {
-  const el = document.getElementById('adm-msg');
-  el.textContent = text || '';
-  el.style.color = ok ? '#4ade80' : '#f87171';
-}
-function admEl(id) { return document.getElementById(id); }
-
-function openAdminModal() {
-  adminUnlocked = false;
-  admEl('admin-modal').classList.add('visible');
-  renderAdminModal();
-}
-function closeAdminModal() {
-  adminUnlocked = false;
-  admEl('admin-modal').classList.remove('visible');
-  ['adm-new1', 'adm-new2', 'adm-pass', 'adm-chg1', 'adm-chg2'].forEach((id) => { admEl(id).value = ''; });
-  adminMsg('');
-}
-function renderAdminModal() {
-  const has = adminHasPassword();
-  admEl('adm-setup').style.display = !has ? 'flex' : 'none';
-  admEl('adm-login').style.display = (has && !adminUnlocked) ? 'flex' : 'none';
-  admEl('adm-panel').style.display = adminUnlocked ? 'flex' : 'none';
-  adminMsg('');
-  if (adminUnlocked) admEl('adm-url').value = remoteBase;
-}
-
-async function adminSetup() {
-  const p1 = admEl('adm-new1').value, p2 = admEl('adm-new2').value;
-  if (p1.length < 6) return adminMsg('パスワードは6文字以上にしてください');
-  if (p1 !== p2) return adminMsg('確認用のパスワードが一致しません');
-  try {
-    if (!(await adminStorePassword(p1))) return adminMsg('この環境ではブラウザに保存できません（プライベートモード等）');
-  } catch (e) { return adminMsg('パスワードを設定できませんでした'); }
-  admEl('adm-new1').value = ''; admEl('adm-new2').value = '';
-  adminUnlocked = true;
-  renderAdminModal();
-  adminMsg('パスワードを設定しました。サーバーURLを入力してください', true);
-}
-
-async function adminLogin() {
-  const wait = adminLockRemainingMs();
-  if (wait > 0) return adminMsg(`試行回数が多すぎます。${Math.ceil(wait / 1000)}秒後にやり直してください`);
-  const pw = admEl('adm-pass').value;
-  let ok = false;
-  try { ok = await adminVerify(pw); } catch (e) { return adminMsg('確認に失敗しました'); }
-  admEl('adm-pass').value = '';
-  if (!ok) {
-    adminRegisterFailure();
-    const w2 = adminLockRemainingMs();
-    return adminMsg(w2 > 0 ? `パスワードが違います。${Math.ceil(w2 / 1000)}秒ロックします` : 'パスワードが違います');
-  }
-  lsDel(ADMIN_KEYS.fail);
-  adminUnlocked = true;
-  renderAdminModal();
-}
-
-function adminSaveUrl(clear) {
-  if (!adminUnlocked) return;
-  const raw = clear ? '' : admEl('adm-url').value;
-  const n = normalizeBaseUrl(raw);
-  if (n === null) return adminMsg('URLの形式が正しくありません（例: https://xxxx.trycloudflare.com）');
-  const changed = n !== remoteBase;
-  if (n) { if (!lsSet(ADMIN_KEYS.base, n)) return adminMsg('この環境ではブラウザに保存できません'); }
-  else lsDel(ADMIN_KEYS.base);
-  remoteBase = n;
-  if (changed) resetRemoteModels();
-  admEl('adm-url').value = n;
-  updateAdminStatus();
-  refreshServerFolders();
-  adminMsg(n ? '保存しました' : 'URLを空にしました（サーバー読み込みなし）', true);
-}
-
-async function adminTestUrl() {
-  if (!adminUnlocked) return;
-  const n = normalizeBaseUrl(admEl('adm-url').value);
-  if (!n) return adminMsg('テストするURLを入力してください');
-  const code = (admEl('adm-test-code').value || 'B789').toUpperCase().trim();
-  adminMsg('接続テスト中...', true);
-  try {
-    const r = await fetch(`${n}/${encodeURIComponent(code)}.glb`, { method: 'HEAD', mode: 'cors', cache: 'no-store' });
-    if (r.ok) adminMsg(`OK: ${code}.glb を取得できます`, true);
-    else if (r.status === 404) adminMsg(`サーバーには繋がりましたが ${code}.glb がありません（この機種は簡易モデル表示になります）`, true);
-    else adminMsg(`サーバーが HTTP ${r.status} を返しました`);
-  } catch (e) {
-    adminMsg('接続できません（URLの間違い・トンネル停止・CORS未許可の可能性）');
-  }
-}
-
-async function adminChangePassword() {
-  if (!adminUnlocked) return;
-  const p1 = admEl('adm-chg1').value, p2 = admEl('adm-chg2').value;
-  if (p1.length < 6) return adminMsg('パスワードは6文字以上にしてください');
-  if (p1 !== p2) return adminMsg('確認用のパスワードが一致しません');
-  try {
-    if (!(await adminStorePassword(p1))) return adminMsg('保存できませんでした');
-  } catch (e) { return adminMsg('変更できませんでした'); }
-  admEl('adm-chg1').value = ''; admEl('adm-chg2').value = '';
-  adminMsg('パスワードを変更しました', true);
-}
-
-function updateAdminStatus() {
-  document.querySelectorAll('.admin-status').forEach((el) => {
-    el.textContent = remoteBase ? '🟢 3Dモデルサーバー: 設定済み' : '⚪ 3Dモデルサーバー: 未設定';
-  });
-  document.querySelectorAll('.srv-box').forEach((b) => { b.style.display = remoteBase ? 'block' : 'none'; });
 }
 
 // 塗装モデルのファイル名: 「航空会社コード_機種コード.glb」（例: CCA_B744.glb → Air China の 747-400）
@@ -2364,44 +1449,6 @@ async function buildReducedGeometries(srcGeos, canSimp, ratio) {
   return out;
 }
 
-function isFiniteBox(b) {
-  return isFinite(b.min.x + b.min.y + b.min.z + b.max.x + b.max.y + b.max.z);
-}
-
-// 軽量化の前後でパーツの外形を比べ、元の範囲から大きくはみ出した／座標が壊れたパーツの番号を返す。
-// 頂点クラスタリングは頂点を平均するだけなので、正常なら元の外形の内側に収まる。はみ出すのは失敗した部品。
-function findAbnormalMeshes(root, list, preBoxes) {
-  root.updateMatrixWorld(true);
-  const bad = new Set();
-  const refD = (() => {
-    const all = new THREE.Box3();
-    preBoxes.forEach((b) => { if (b && !b.isEmpty() && isFiniteBox(b)) all.union(b); });
-    return all.isEmpty() ? 1 : (all.getSize(new THREE.Vector3()).length() || 1);
-  })();
-  const s0 = new THREE.Vector3(), s1 = new THREE.Vector3();
-  list.forEach((m, i) => {
-    const pb = preBoxes[i];
-    if (!pb || pb.isEmpty()) return;
-    const b = new THREE.Box3().setFromObject(m);
-    if (b.isEmpty() || !isFiniteBox(b) || !isFiniteBox(pb)) { bad.add(i); return; }
-    pb.getSize(s0); b.getSize(s1);
-    const tol = refD * 0.004 + s0.length() * 0.03;
-    if (b.min.x < pb.min.x - tol || b.min.y < pb.min.y - tol || b.min.z < pb.min.z - tol ||
-        b.max.x > pb.max.x + tol || b.max.y > pb.max.y + tol || b.max.z > pb.max.z + tol ||
-        s1.length() > s0.length() * 1.3 + tol) bad.add(i);
-  });
-  return bad;
-}
-
-function removeMeshesByIndex(root, set) {
-  if (!set || !set.size) return 0;
-  const list = collectMeshes(root);
-  if (set.size >= list.length) return 0;   // 全部消えるなら何もしない
-  let n = 0;
-  set.forEach((i) => { const m = list[i]; if (m && m.parent) { m.parent.remove(m); n++; } });
-  return n;
-}
-
 // 室内パーツなど外から見えない部品の名前
 const INTERIOR_NAME_RE = /(seat|interior|galley|lavator|overhead|passenger|cabin[_\s-]*(int|floor|wall)|cockpit[_\s-]*(int|seat|panel|console)|bin[_\s-]*lid)/i;
 
@@ -2417,12 +1464,12 @@ function cullModelParts(root, preset) {
   if (!meshes.length) return;
   const boxes = meshes.map((m) => new THREE.Box3().setFromObject(m));
   const all = new THREE.Box3();
-  boxes.forEach((b) => { if (!b.isEmpty() && isFiniteBox(b)) all.union(b); });
+  boxes.forEach((b) => { if (!b.isEmpty()) all.union(b); });
   const diag = all.getSize(new THREE.Vector3()).length() || 1;
   const sz = new THREE.Vector3();
   const remove = [];
   meshes.forEach((m, i) => {
-    let rm = meshHiddenInChain(m) || (!boxes[i].isEmpty() && !isFiniteBox(boxes[i]));
+    let rm = meshHiddenInChain(m);
     if (!rm && !preset.keepAll) {
       const nm = (m.name || '') + ' ' + (m.parent && m.parent.name || '');
       if (INTERIOR_NAME_RE.test(nm)) rm = true;
@@ -2537,12 +1584,34 @@ function stripMaterialMaps(root, dropMaps) {
   });
 }
 
-function downscaleModelTextures(root, maxSize) {
-  // 同じ画像を複数のテクスチャが共有している場合があるので、「画像 → 縮小後canvas」で管理する。
-  // （以前はテクスチャ単位で処理して元画像を close していたため、共有していた別テクスチャが
-  //   閉じた画像を参照し続け、再描画のたびに真っ黒/真っ白になっていた）
-  const doneTex = new Set();
-  const imgMap = new Map();
+// 画像を縮小する。ImageBitmap の縮小デコードを優先（canvas を作らないのでメモリが少ない）。
+// canvas は、メモリ不足だと確保や描画に無言で失敗して「空っぽ＝真っ黒」になるため、内容があるか確認する。
+// どちらも失敗したら null を返し、呼び出し側は元の画像をそのまま使う。
+async function resizeImage(img, w, h) {
+  try {
+    if (typeof createImageBitmap === 'function') {
+      const bmp = await createImageBitmap(img, { resizeWidth: w, resizeHeight: h, resizeQuality: 'medium' });
+      if (bmp && bmp.width > 0 && bmp.height > 0) return bmp;
+    }
+  } catch (e) { /* canvas 方式へ */ }
+  try {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    for (let i = 0; i < 9; i++) {
+      const d = ctx.getImageData(Math.floor(((i % 3) + 0.5) / 3 * w), Math.floor((Math.floor(i / 3) + 0.5) / 3 * h), 1, 1).data;
+      if (d[3] > 0) return c;
+    }
+    return null;   // 全部透明 = 描画に失敗した可能性が高い
+  } catch (e) { return null; }
+}
+
+async function downscaleModelTextures(root, maxSize) {
+  // 同じ画像を複数のテクスチャが共有していることがあるので、「画像 → それを使うテクスチャ」で管理する
+  const users = new Map();
+  const seenTex = new Set();
   root.traverse((o) => {
     if (!o.isMesh) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -2550,38 +1619,27 @@ function downscaleModelTextures(root, maxSize) {
       if (!mat) continue;
       for (const key in mat) {
         const tex = mat[key];
-        if (!tex || !tex.isTexture || doneTex.has(tex)) continue;
-        doneTex.add(tex);
-        const img = tex.image;
-        if (!img) continue;
-        let out = imgMap.get(img);
-        if (out === undefined) {
-          out = img;
-          const w = img.width || img.naturalWidth;
-          const h = img.height || img.naturalHeight;
-          if (w && h && Math.max(w, h) > maxSize) {
-            try {
-              const k = maxSize / Math.max(w, h);
-              const c = document.createElement('canvas');
-              c.width = Math.max(1, Math.round(w * k));
-              c.height = Math.max(1, Math.round(h * k));
-              c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-              out = c;
-            } catch (e) { out = img; }
-          }
-          imgMap.set(img, out);
-        }
-        if (out !== img) {
-          tex.image = out;
-          tex.needsUpdate = true;
-        }
+        if (!tex || !tex.isTexture || seenTex.has(tex) || !tex.image) continue;
+        seenTex.add(tex);
+        if (!users.has(tex.image)) users.set(tex.image, []);
+        users.get(tex.image).push(tex);
       }
     }
   });
-  // すべてのテクスチャの付け替えが済んでから、元画像を解放する
-  imgMap.forEach((out, img) => {
-    if (out !== img && img.close) { try { img.close(); } catch (e) {} }
-  });
+  const replaced = [];
+  for (const [img, texs] of users) {
+    const w = img.width || img.naturalWidth, h = img.height || img.naturalHeight;
+    if (!w || !h || Math.max(w, h) <= maxSize) continue;
+    const k = maxSize / Math.max(w, h);
+    const out = await resizeImage(img, Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+    if (out) {
+      for (const tex of texs) { tex.image = out; tex.needsUpdate = true; }
+      replaced.push(img);
+    }
+    await yieldToUI();
+  }
+  // すべての付け替えが済んでから元画像を解放する
+  for (const img of replaced) if (img.close) { try { img.close(); } catch (e) {} }
 }
 
 // 環境マップ（金属・鏡面系マテリアルは環境が無いと真っ黒になるため、簡易的な空の反射を用意する）
@@ -2624,7 +1682,7 @@ async function buildModelWrapper(gltf, typeCode) {
   mergeMeshesByMaterial(gltf.scene);
   await yieldToUI();
   stripMaterialMaps(gltf.scene, preset.dropMaps);
-  downscaleModelTextures(gltf.scene, preset.tex);
+  await downscaleModelTextures(gltf.scene, preset.tex);
   await yieldToUI();
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
@@ -2656,15 +1714,6 @@ async function buildModelWrapper(gltf, typeCode) {
   meshes.forEach((m, i) => { if (canSimp[i]) total += geoTriCount(m.geometry); });
   wrapper.userData.srcTris = total;
 
-  // 異常パーツ検出用に、軽量化前の外形を控える
-  const prune = state.pruneAbnormal;
-  let preBoxes = null;
-  const badSets = [];
-  if (prune) {
-    wrapper.updateMatrixWorld(true);
-    preBoxes = meshes.map((m) => new THREE.Box3().setFromObject(m));
-  }
-
   let variants = [wrapper];
   if (total > 0) {
     const r0 = Math.min(1, preset.cap / total);
@@ -2675,29 +1724,20 @@ async function buildModelWrapper(gltf, typeCode) {
         if (reduced[i] !== m.geometry) { m.geometry.dispose(); m.geometry = reduced[i]; }
       });
       geos = reduced;
-      if (prune) badSets[0] = findAbnormalMeshes(wrapper, meshes, preBoxes);
     }
     const lvl0Tris = Math.min(total, preset.cap);
     wrapper.userData.tris = lvl0Tris;
-    if (preset.lod && lvl0Tris > LOD_MIN_TRIS) {
+    if (preset.lod && state.farLod && lvl0Tris > LOD_MIN_TRIS) {
       let prev = geos;
       for (const ratio of LOD_RATIOS) {
         const g = await buildReducedGeometries(prev, canSimp, ratio);
         const v = wrapper.clone();           // 材質・テクスチャは共有（メモリは増えない）
         const vm = collectMeshes(v);
         vm.forEach((m, i) => { m.geometry = g[i]; });
-        if (prune) badSets[variants.length] = findAbnormalMeshes(v, vm, preBoxes);
         variants.push(v);
         prev = g;
       }
     }
-  }
-  // 異常パーツを各レベルのモデルから取り除く（メッシュの並び順を保つため、全レベルを作り終えてから削除）
-  if (prune) {
-    let removed = 0;
-    variants.forEach((v, k) => { const n = removeMeshesByIndex(v, badSets[k]); if (k === 0) removed = n; });
-    wrapper.userData.abnormal = removed;
-    if (removed) console.warn(`[${typeCode}] 異常パーツを ${removed} 個削除しました`);
   }
   return { wrapper, variants };
 }
@@ -2724,13 +1764,13 @@ function disposeModelScene(m) {
   m.variants = null;
 }
 
-// ポリゴン設定の変更: 読み込み済みモデルを破棄して、新しい設定で作り直す
-function onPruneAbnChange(v) {
-  state.pruneAbnormal = !!v;
-  saveSetting('fr_pruneAbn', v ? '1' : '0');
+function onFarLodChange(v) {
+  state.farLod = !!v;
+  saveSetting('fr_farLod', v ? '1' : '0');
   onQualityChange(state.quality);   // モデルを作り直す
 }
 
+// ポリゴン設定の変更: 読み込み済みモデルを破棄して、新しい設定で作り直す
 async function onQualityChange(v) {
   if (!QUALITY_PRESETS[v]) return;
   state.quality = v;
@@ -2753,10 +1793,11 @@ async function onQualityChange(v) {
   }
 }
 
-function evictModels(keepType) {
+function evictModels(keepType, limit) {
+  limit = limit || MAX_LOADED_MODELS;
   const loaded = [];
-  state.models.forEach((m, k) => { if (m.scene && !m.procedural) loaded.push([k, m]); });
-  if (loaded.length <= MAX_LOADED_MODELS) return;
+  state.models.forEach((m, k) => { if (m.scene) loaded.push([k, m]); });
+  if (loaded.length <= limit) return;
   const inUse = new Set([keepType]);
   if (state.is3DMode && state.selectedIcao) {
     const sf = state.flights.get(state.selectedIcao);
@@ -2769,10 +1810,61 @@ function evictModels(keepType) {
   const cands = loaded.filter(([k]) => !inUse.has(k)).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
   let remaining = loaded.length;
   for (const [, m] of cands) {
-    if (remaining <= MAX_LOADED_MODELS) break;
+    if (remaining <= limit) break;
     disposeModelScene(m);
     remaining--;
   }
+}
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function collectModelTextures(root) {
+  const list = [];
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const mat of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!mat) continue;
+      for (const key in mat) { const t = mat[key]; if (t && t.isTexture) list.push({ tex: t, mat, key }); }
+    }
+  });
+  return list;
+}
+
+// テクスチャを先にGPUへ転送して、メモリ不足(GL_OUT_OF_MEMORY)で失敗していないか確認する。
+// （失敗したテクスチャは描画時に真っ黒になる）失敗したら他のモデルを解放して再試行し、
+// それでもだめなら、そのマップを外して灰色で表示する（真っ黒にはしない）。
+async function warmUpTextures(root, keepType) {
+  const r = (state.is3DMode && typeof renderer3d !== 'undefined') ? renderer3d : null;
+  if (!r || !root) return true;
+  let gl;
+  try { gl = r.getContext(); } catch (e) { return true; }
+  if (!gl || gl.isContextLost()) return true;
+  const list = collectModelTextures(root);
+  const done = new Map();
+  let ok = true, n = 0;
+  for (const it of list) {
+    let res = done.get(it.tex);
+    if (res === undefined) {
+      res = false;
+      for (let attempt = 0; attempt < 3 && !res; attempt++) {
+        for (let i = 0; i < 8 && gl.getError() !== gl.NO_ERROR; i++) { /* 古いエラーを捨てる */ }
+        r.initTexture(it.tex);
+        if (gl.getError() === gl.NO_ERROR) { res = true; break; }
+        it.tex.dispose();
+        evictModels(keepType, 1);
+        await sleepMs(300 * (attempt + 1));
+      }
+      done.set(it.tex, res);
+      if (++n % 4 === 0) await yieldToUI();
+    }
+    if (!res) {
+      it.mat[it.key] = null;
+      if (it.key === 'map' && it.mat.color) it.mat.color.set(0xb4bcc8);
+      it.mat.needsUpdate = true;
+      ok = false;
+    }
+  }
+  return ok;
 }
 
 let modelQueue = Promise.resolve();
@@ -2782,52 +1874,40 @@ function ensureModelLoaded(typeCode) {
   m.lastUsed = performance.now();
   if (m.scene) return Promise.resolve(true);
   if (m.loading) return m.loading;
-  if (m.procedural) {   // サーバーに無い機種: 簡易モデルをその場で生成
-    try {
-      const w = buildProceduralModel(typeCode);
-      m.scene = w; m.variants = [w]; m.failed = false;
-      return Promise.resolve(true);
-    } catch (err) {
-      console.warn('procedural model failed:', typeCode, err);
-      m.failed = true;
-      return Promise.resolve(false);
-    }
-  }
 
   const task = async () => {
     try {
-      if (m.scene) return true;
-      let buf;
-      if (m.source && m.source.file) {
-        buf = await m.source.file.arrayBuffer();
-      } else if (m.source && m.source.remote) {
-        buf = await fetchRemoteBuffer(typeCode);   // サーバー取得済みならメモリのキャッシュを使い回す
-      } else {
-        const r = await fetch(m.source.url);
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        buf = await r.arrayBuffer();
-      }
-      const gltf = await new Promise((res, rej) => gltfLoader.parse(buf, '', res, rej));
-      buf = null;
-      const built = await buildModelWrapper(gltf, typeCode);
-      m.scene = built.wrapper;
-      m.variants = built.variants;
-      m.lastUsed = performance.now();
-      m.failed = false;
-      evictModels(typeCode);
-      return true;
-    } catch (err) {
-      console.warn('GLB load failed:', typeCode, err);
-      if (m.auto) {   // サーバーのGLBが壊れている/読めない場合も、止めずに簡易モデルで表示を続ける
+      // メモリが一時的に足りないと読み込み・デコードに失敗することがあるので、他のモデルを解放しつつ最大3回試す
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          dropRemoteBuffer(typeCode);
-          m.procedural = true; m.source = null; m.retryAt = Date.now() + REMOTE_RETRY_MS;
-          const w = buildProceduralModel(typeCode);
-          m.scene = w; m.variants = [w]; m.failed = false;
+          if (m.scene) return true;
+          let buf;
+          if (m.source && m.source.file) {
+            buf = await m.source.file.arrayBuffer();
+          } else {
+            const r = await fetch(m.source.url);
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            buf = await r.arrayBuffer();
+          }
+          let gltf = await new Promise((res, rej) => gltfLoader.parse(buf, '', res, rej));
+          buf = null;
+          const built = await buildModelWrapper(gltf, typeCode);
+          gltf = null;
+          m.scene = built.wrapper;
+          m.variants = built.variants;
+          m.lastUsed = performance.now();
+          m.failed = false;
+          evictModels(typeCode);
+          await warmUpTextures(built.wrapper, typeCode);
           return true;
-        } catch (e2) {}
+        } catch (err) {
+          console.warn(`GLB load failed (${attempt + 1}/3):`, typeCode, err);
+          if (m.scene) disposeModelScene(m);
+          if (attempt < 2) { evictModels(typeCode, 1); await sleepMs(500 * (attempt + 1)); }
+        }
       }
       m.failed = true;
+      m.failedAt = performance.now();
       return false;
     } finally {
       m.loading = null;
@@ -3065,8 +2145,7 @@ function estimateBaroOffset(f) {
   return est[est.length >> 1];
 }
 
-function finalizeImportedData(opts) {
-  const light = !!(opts && opts.light);   // 段階読み込み中: 配列の詰め直しと、変化の無い機体の再計算を省く
+function finalizeImportedData() {
   state.globalMinTime = Infinity;
   state.globalMaxTime = -Infinity;
 
@@ -3075,8 +2154,7 @@ function finalizeImportedData(opts) {
       state.flights.delete(icao);
       return;
     }
-    if (!light || flight.unsorted) finalizeFlight(flight);
-    if (!light || flight._fin !== flight.n) {
+    finalizeFlight(flight);
     flight.baroOffOwn = estimateBaroOffset(flight);
     const seen = new Set();
     const parts = [];
@@ -3095,18 +2173,11 @@ function finalizeImportedData(opts) {
       flight.airline = bestAl;
       flight._mkVer = -1;
     }
-    flight._fin = flight.n;
-    }
     const minT = flight.t[0];
     const maxT = flight.t[flight.n - 1];
     if (minT < state.globalMinTime) state.globalMinTime = minT;
     if (maxT > state.globalMaxTime) state.globalMaxTime = maxT;
   });
-
-  if (state.prog) {   // 段階読み込み中は、ファイル名から分かる全体の時間範囲をバーの範囲にする
-    state.globalMinTime = Math.min(state.globalMinTime, state.prog.fullMin);
-    state.globalMaxTime = Math.max(state.globalMaxTime, state.prog.fullMax);
-  }
 
   const offs = [];
   state.flights.forEach((fl) => { if (fl.baroOffOwn !== null && fl.baroOffOwn !== undefined) offs.push(fl.baroOffOwn); });
@@ -3152,10 +2223,8 @@ function updateImportUI() {
       rangeEl.textContent = '---';
     }
   }
-  const realModelKeys = [];
-  state.models.forEach((m, k) => { if (!m.procedural) realModelKeys.push(k); });
-  document.getElementById('stat-models').textContent = `${realModelKeys.length} 種類`;
-  const modelNames = realModelKeys.join(', ');
+  document.getElementById('stat-models').textContent = `${state.models.size} 種類`;
+  const modelNames = Array.from(state.models.keys()).join(', ');
   document.getElementById('loaded-model-list').textContent = modelNames ? `登録済モデル: ${modelNames}` : '';
 
   const hasFlights = state.flights.size > 0;
@@ -3172,7 +2241,7 @@ function initFlightTimelineCanvas() {
     if (!(state.globalMaxTime > state.globalMinTime)) return;
     const rect = cvs.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
-    state.currentTime = Math.min(playLimit(), state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio);
+    state.currentTime = state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio;
     drawModelFlightTimeline();
   });
 }
@@ -3225,7 +2294,7 @@ function drawModelFlightTimeline() {
 
     c.fillStyle = 'rgba(245, 158, 11, 0.72)';
     state.flights.forEach((flight) => {
-      if (!flight.n || !hasModelFor(flight)) return;
+      if (!flight.n || !state.models.has(modelKeyOf(flight))) return;
       has3DFlightCount++;
       const T = flight.t;
       const n = flight.n;
@@ -3262,7 +2331,7 @@ function drawModelFlightTimeline() {
     if (has3DFlightCount > 0 && min3DT < Infinity) {
       summaryEl.textContent = `3D対応(${has3DFlightCount}機): ${formatJSTShort(min3DT)}〜${formatJSTShort(max3DT)}`;
     } else {
-      summaryEl.textContent = (state.models.size === 0 && !autoModelsEnabled()) ? '3Dモデル未設定（管理者設定でサーバーURLを設定）' : '3D対応機体の飛行なし';
+      summaryEl.textContent = state.models.size === 0 ? '3Dモデル(.glb)未読込' : '3D対応機体の飛行なし';
     }
     timelineCacheSel = state.selectedIcao;
     timelineDirty = false;
@@ -3270,23 +2339,9 @@ function drawModelFlightTimeline() {
 
   ctx.clearRect(0, 0, w, h);
   ctx.drawImage(timelineCache, 0, 0);
-  const pg = state.prog;
-  if (pg && !pg.done && isFinite(pg.loadedUntil)) {   // 未読み込みの範囲を暗く表示
-    const lx = toX(pg.loadedUntil);
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.78)';
-    ctx.fillRect(lx, 0, w - lx, h);
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(lx - 1, 0, 2, h);
-  }
   const curX = toX(state.currentTime);
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(curX - 1, 0, 2, h);
-}
-
-// 段階読み込み中に、再生・移動してよい上限（読み込み済みの最後の時刻）
-function playLimit() {
-  const p = state.prog;
-  return (p && !p.done) ? Math.min(state.globalMaxTime, p.loadedUntil) : state.globalMaxTime;
 }
 
 function formatJSTShort(unixSec) {
@@ -3443,7 +2498,7 @@ function showInspectorDetail(icao) {
   document.getElementById('insp-alt-spd').textContent =
     `${isGround ? 'GND' : f.alt[li].toLocaleString() + ' ft'} / ${f.spd[li]} kt`;
   document.getElementById('insp-pos').textContent = `${(f.lat[li] / 1e6).toFixed(3)}, ${(f.lon[li] / 1e6).toFixed(3)}`;
-  document.getElementById('insp-model').textContent = modelSourceLabel(f);
+  document.getElementById('insp-model').textContent = state.models.has(modelKeyOf(f)) ? `あり (${modelKeyOf(f)}.glb)` : 'なし';
 }
 
 function jumpToRadarWithSelected() {
@@ -3680,14 +2735,8 @@ function initMap() {
   slider.addEventListener('input', (e) => {
     if (!isFinite(state.globalMinTime) || !isFinite(state.globalMaxTime)) return;
     const ratio = parseFloat(e.target.value) / 1000;
-    let tNew = state.globalMinTime + (state.globalMaxTime - state.globalMinTime) * ratio;
-    const lim = playLimit();
-    if (tNew > lim) {   // 読み込み済みの範囲より先には動かせない
-      tNew = lim;
-      const sp = state.globalMaxTime - state.globalMinTime;
-      if (sp > 0) e.target.value = Math.round((tNew - state.globalMinTime) / sp * 1000);
-    }
-    state.currentTime = tNew;
+    state.currentTime = state.globalMinTime
+      + (state.globalMaxTime - state.globalMinTime) * ratio;
     drawModelFlightTimeline();
     invalidateRadar();
   });
@@ -3940,6 +2989,7 @@ let groundTilesGroup = null;
 const loadedTileKeys = new Set();
 let tileSession = 0;
 const nearbyCache = new Map();
+let nearScan = null;   // 周辺機の候補リスト（毎フレーム全機を調べず、0.4秒ごとに更新）
 let originLat = 0, originLon = 0;
 
 function latLonToMeters(lat, lon, refLat, refLon) {
@@ -3962,24 +3012,20 @@ async function enter3DView() {
   if (!interp) return;
 
   state.entering3D = true;
+  disposePreview3D();   // 設定画面のプレビュー用のWebGLを解放（GPUメモリ節約）
+  nearScan = null;
   try {
     state.is3DMode = true;
     state.sceneReady = false;
     document.getElementById('view3d-screen').classList.add('active');
 
-    if (autoModelsEnabled()) {
-      showToast('サーバーから3Dモデルを取得中...');
-      await ensureRemoteForFlight(flight);
-      showToast('', false);
-      if (!state.is3DMode) return; // 取得中に終了された
-    }
     const mKey = modelKeyOf(flight);
     const modelData = state.models.get(mKey);
     const noModelOverlay = document.getElementById('no-model-overlay');
 
     if (!modelData) {
       document.getElementById('no-model-msg').textContent =
-        `機種コード「${flight.type}」に対応する3Dデータ（${flight.type}.glb）がありません。管理者設定で3DモデルサーバーのURLを設定すると、サーバーから自動で読み込みます。`;
+        `機種コード「${flight.type}」に対応する3Dデータ（${flight.type}.glb）が読み込まれていません。`;
       noModelOverlay.classList.add('visible');
       return;
     }
@@ -4032,6 +3078,10 @@ async function enter3DView() {
     controls3d.target.set(0, altM, 0);
     controls3d.update();
 
+    showToast('テクスチャを準備中...');
+    await warmUpTextures(modelData.scene, mKey);
+    showToast('', false);
+    if (!state.is3DMode) return;
     state.sceneReady = true;
     if (state.soundEnabled) startEngineAudio();
   } finally {
@@ -4042,6 +3092,23 @@ async function enter3DView() {
 function exit3DView() {
   state.is3DMode = false;
   state.sceneReady = false;
+  // メモリ節約: 周辺機・地図タイル・選択機以外のモデルを解放する
+  nearbyCache.clear();
+  nearScan = null;
+  if (nearbyPlanesGroup) while (nearbyPlanesGroup.children.length > 0) nearbyPlanesGroup.remove(nearbyPlanesGroup.children[0]);
+  if (groundTilesGroup) {
+    tileSession++;
+    loadedTileKeys.clear();
+    while (groundTilesGroup.children.length > 0) {
+      const old = groundTilesGroup.children[0];
+      groundTilesGroup.remove(old);
+      if (old.geometry) old.geometry.dispose();
+      if (old.material) { if (old.material.map) old.material.map.dispose(); old.material.dispose(); }
+    }
+  }
+  const selF = state.selectedIcao ? state.flights.get(state.selectedIcao) : null;
+  const keepKey = selF ? modelKeyOf(selF) : null;
+  state.models.forEach((m, k) => { if (k !== keepKey && m.scene && !m.loading) disposeModelScene(m); });
   showToast('', false);
   document.getElementById('view3d-screen').classList.remove('active');
   document.getElementById('no-model-overlay').classList.remove('visible');
@@ -4378,27 +3445,36 @@ function update3DScene() {
     let nearbyCount = 0;
     nearCands.length = 0;
     const seen = new Set();
-    state.flights.forEach((otherFlight, otherIcao) => {
+    const nowMs = performance.now();
+    if (!nearScan || nearScan.sel !== state.selectedIcao || nearScan.n !== state.flights.size ||
+        nowMs - nearScan.realT > 400 || Math.abs(state.currentTime - nearScan.simT) > 2) {
+      const list = [];
+      state.flights.forEach((f, icao) => {
+        if (icao === state.selectedIcao || !state.models.get(modelKeyOf(f))) return;
+        const s0 = getInterpolatedState(f, state.currentTime, nearbyTmp);
+        if (!s0) return;
+        const p0 = latLonToMeters(s0.lat, s0.lon, originLat, originLon);
+        if (Math.hypot(p0.x - pos.x, p0.z - pos.z) > NEARBY_RADIUS_M + 3000) return;   // 次の更新までの移動ぶんの余裕
+        list.push([f, icao]);
+      });
+      nearScan = { list, sel: state.selectedIcao, n: state.flights.size, realT: nowMs, simT: state.currentTime };
+    }
+    nearScan.list.forEach(([otherFlight, otherIcao]) => {
       if (otherIcao === state.selectedIcao) return;
       const otherKey = modelKeyOf(otherFlight);
       const otherModel = state.models.get(otherKey);
-      if (!otherModel && !autoModelsEnabled()) return;
+      if (!otherModel) return;
 
       const oi = getInterpolatedState(otherFlight, state.currentTime, nearbyTmp);
       if (!oi) return;
 
       const oPos = latLonToMeters(oi.lat, oi.lon, originLat, originLon);
       const dist = Math.hypot(oPos.x - pos.x, oPos.z - pos.z);
-      if (dist > 50000) return;
+      if (dist > NEARBY_RADIUS_M) return;
 
-      if (!otherModel) {   // 近くに来た機種だけ、サーバーから取得（取得できるまでは表示しない）
-        ensureRemoteForFlight(otherFlight);
-        return;
-      }
-      if (otherModel.auto) wantLivery(otherFlight);
       if (!otherModel.scene) {
         // 近くに来た機種のモデルだけ、その時に読み込む
-        if (!otherModel.loading && !otherModel.failed) ensureModelLoaded(otherKey);
+        if (!otherModel.loading && (!otherModel.failed || performance.now() - (otherModel.failedAt || 0) > MODEL_FAIL_RETRY_MS)) ensureModelLoaded(otherKey);
         return;
       }
       otherModel.lastUsed = performance.now();
@@ -4649,6 +3725,21 @@ function stopEngineAudio() {
  */
 let prevScene, prevCamera, prevRenderer, prevControls, prevModelHolder;
 
+// 設定画面のプレビューは専用のWebGL(+GPUメモリ)を持つので、3D表示に入る時に解放する（設定画面を開けば作り直される）
+function disposePreview3D() {
+  if (!prevRenderer) return;
+  try {
+    if (prevModelHolder) while (prevModelHolder.children.length > 0) prevModelHolder.remove(prevModelHolder.children[0]);
+    if (prevScene && prevScene.environment) prevScene.environment.dispose();
+    if (prevControls) prevControls.dispose();
+    prevRenderer.dispose();
+    if (prevRenderer.forceContextLoss) prevRenderer.forceContextLoss();
+    if (prevRenderer.domElement.parentNode) prevRenderer.domElement.parentNode.removeChild(prevRenderer.domElement);
+  } catch (e) {}
+  prevRenderer = null; prevScene = null; prevCamera = null; prevControls = null; prevModelHolder = null;
+  prevFramedType = null;
+}
+
 function openSettingsScreen() {
   document.getElementById('settings-screen').classList.add('active');
   updateSettingsModelList();
@@ -4673,25 +3764,23 @@ function updateSettingsModelList() {
   const current = sel.value;
   sel.innerHTML = '';
 
-  const realKeys = [];
-  state.models.forEach((m, k) => { if (!m.procedural) realKeys.push(k); });
-  if (realKeys.length === 0) {
+  if (state.models.size === 0) {
     const opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = '3Dモデル未読み込み（機体を3D表示すると、ここに追加されます）';
+    opt.textContent = '3Dモデル未読み込み';
     sel.appendChild(opt);
     return;
   }
 
-  realKeys.forEach((typeCode) => {
+  state.models.forEach((_, typeCode) => {
     const opt = document.createElement('option');
     opt.value = typeCode;
     const rs = getModelRealSize(typeCode);
-    opt.textContent = `${typeCode}.glb` + (state.models.get(typeCode).auto ? '【サーバー】' : '') + (rs.known ? ` (${rs.size}m)` : ' (実寸不明:仮35m)');
+    opt.textContent = `${typeCode}.glb` + (rs.known ? ` (${rs.size}m)` : ' (実寸不明:仮35m)');
     sel.appendChild(opt);
   });
 
-  if (current && realKeys.includes(current)) sel.value = current;
+  if (current && state.models.has(current)) sel.value = current;
 }
 
 function initPreview3D() {
@@ -4735,6 +3824,7 @@ function initPreview3D() {
   });
 
   function animatePreview() {
+    if (!prevRenderer) return;   // 解放済みならループも止める
     requestAnimationFrame(animatePreview);
     if (document.getElementById('settings-screen').classList.contains('active')) {
       prevControls.update();
@@ -4763,7 +3853,7 @@ async function selectPreviewModel() {
   if (!data.scene) showToast('3Dモデルを読み込み中...');
   const ok = await ensureModelLoaded(typeCode);
   showToast('', false);
-  if (!ok || token !== previewToken) return;
+  if (!ok || token !== previewToken || !prevModelHolder) return;
   while (prevModelHolder.children.length > 0) {
     prevModelHolder.remove(prevModelHolder.children[0]);
   }
@@ -4848,10 +3938,9 @@ function mainLoop(now) {
       }
     }
 
-    // 範囲外はクランプ（span=0 でも表示は維持）。段階読み込み中は読み込み済みの最後で待つ
+    // 範囲外はクランプ（span=0 でも表示は維持）
     if (state.currentTime < minT) state.currentTime = minT;
-    const limT = playLimit();
-    if (state.currentTime > limT) state.currentTime = limT;
+    if (state.currentTime > maxT) state.currentTime = maxT;
 
     const radarVisible = elRadar.classList.contains('active')
       && !state.is3DMode
